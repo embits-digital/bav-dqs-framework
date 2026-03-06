@@ -1,6 +1,7 @@
 from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict, Optional
+from contextlib import contextmanager
 
 from ..utils.config_manager import ConfigManager
 from .writer import Writer
@@ -43,20 +44,21 @@ class DataManager:
         )
 
     def get_writer(self) -> Writer:
-        """
-        Returns the configured Writer.
-        If the H5 file does not exist, it will be initialized with the metadata.
-        """
         if self._writer is None:
+            # Agrupa os metadados globais no dicionário esperado pelo Writer
+            full_metadata = {
+                "config": self.config,
+                "schema_version": self.schema_version,
+                "experiment_id": self.experiment_id,
+            }
+            
             self._writer = Writer(
                 file_path=self.file_path,
-                config=self.config,
-                schema_version=self.schema_version,
-                experiment_id=self.experiment_id,
+                metadata=full_metadata  # Agora coincide com a assinatura do Writer
             )
-            # It calls the initialize_file you created (it has a hold if exists).
             self._writer.initialize_file()
         return self._writer
+
 
     def get_reader(self) -> Reader:
         """Returns the Reader to access the H5 data."""
@@ -74,3 +76,28 @@ class DataManager:
 
     def __repr__(self) -> str:
         return f"<DataManager(exp={self.experiment_id}, path={self.file_path.name})>"
+
+    @contextmanager
+    def session(self):
+        """Context Manager para operações rápidas de leitura/escrita."""
+        reader = self.open_reader()
+        with reader as r:
+            yield r
+
+    def fetch_run_slice(self, group: str, run_id: str, dataset: str, start: int, end: int):
+        """
+        Exemplo de Lazy Loading Real: Lê apenas um intervalo temporal do HDF5.
+        Evita estourar a memória em datasets de simulação muito longos.
+        """
+        with self.session() as r:
+            ds = r.get_dataset_lazy(group, dataset, run_id)
+            # O fatiamento [start:end] acontece no nível do arquivo (I/O otimizado)
+            return ds[start:end] 
+
+    def stream_run_data(self, group: str, run_id: str, dataset: str, chunk_size: int = 1000):
+        """Generator para processar grandes arquivos em pedaços (streaming)."""
+        with self.session() as r:
+            ds = r.get_dataset_lazy(group, dataset, run_id)
+            total_size = ds.shape[0]
+            for i in range(0, total_size, chunk_size):
+                yield ds[i : i + chunk_size]
