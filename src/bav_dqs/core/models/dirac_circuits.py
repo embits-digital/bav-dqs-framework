@@ -5,7 +5,7 @@ from qiskit.circuit.library import RXXGate, RYYGate, RZGate
 from bav_dqs.utils.types.dirac_simulation import DiracSimulationModelCfg
 
 def build_initial_circuit(n_qubits: int) -> QuantumCircuit:
-    """Prepara o estado inicial: excitação única no centro da rede 1D."""
+    """Prepares the initial state: single excitation at the center of the 1D network."""
     n = int(n_qubits)
     if n < 2: raise ValueError("n_qubits >= 2")
     qc = QuantumCircuit(n)

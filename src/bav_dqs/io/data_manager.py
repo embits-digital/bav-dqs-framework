@@ -10,7 +10,7 @@ from .reader import Reader
 class DataManager:
     """
     Central I/O point of the bav_dqs framework.
-    Manages persistence in HDF5, ensuring traceability and integrity.
+    Manages edge_persistence in HDF5, ensuring traceability and integrity.
     """
     def __init__(
         self,
@@ -45,7 +45,7 @@ class DataManager:
 
     def get_writer(self) -> Writer:
         if self._writer is None:
-            # Agrupa os metadados globais no dicionário esperado pelo Writer
+            # Groups the global metadata into the dictionary expected by Writer.
             full_metadata = {
                 "config": self.config,
                 "schema_version": self.schema_version,
@@ -54,7 +54,7 @@ class DataManager:
             
             self._writer = Writer(
                 file_path=self.file_path,
-                metadata=full_metadata  # Agora coincide com a assinatura do Writer
+                metadata=full_metadata  # Now it coincides with the signing of the Writer.
             )
             self._writer.initialize_file()
         return self._writer
@@ -79,23 +79,23 @@ class DataManager:
 
     @contextmanager
     def session(self):
-        """Context Manager para operações rápidas de leitura/escrita."""
+        """Context Manager for fast read/write operations."""
         reader = self.open_reader()
         with reader as r:
             yield r
 
     def fetch_run_slice(self, group: str, run_id: str, dataset: str, start: int, end: int):
         """
-        Exemplo de Lazy Loading Real: Lê apenas um intervalo temporal do HDF5.
-        Evita estourar a memória em datasets de simulação muito longos.
+        Example of Lazy Loading Real: Reads only a time interval from HDF5.
+        Prevents memory overflow in very long simulation datasets.
         """
         with self.session() as r:
             ds = r.get_dataset_lazy(group, dataset, run_id)
-            # O fatiamento [start:end] acontece no nível do arquivo (I/O otimizado)
+            # Slicing [start:end] happens at the file level (optimized I/O)
             return ds[start:end] 
 
     def stream_run_data(self, group: str, run_id: str, dataset: str, chunk_size: int = 1000):
-        """Generator para processar grandes arquivos em pedaços (streaming)."""
+        """Generator for processing large files into chunks (streaming)."""
         with self.session() as r:
             ds = r.get_dataset_lazy(group, dataset, run_id)
             total_size = ds.shape[0]

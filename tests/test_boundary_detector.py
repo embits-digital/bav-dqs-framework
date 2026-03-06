@@ -6,16 +6,16 @@ from bav_dqs.core.detectors.boundary_detector import BoundaryDetector, BoundaryD
 
 @pytest.fixture
 def base_cfg():
-    return BoundaryDetectorCfg(threshold=0.5, edge_window=2, persistence=3)
+    return BoundaryDetectorCfg(threshold=0.5, edge_window=2, edge_persistence=3)
 
 @pytest.fixture
 def detector(base_cfg):
     return BoundaryDetector(cfg=base_cfg, vector_size=10)
 
-# --- Testes Unitários ---
+# --- Unit Tests ---
 
 def test_initialization_and_validation():
-    """Garante que configurações inválidas lancem erros apropriados."""
+    """Ensures that invalid configurations throw appropriate errors."""
     with pytest.raises(ValueError, match="vector_size must be >= 2"):
         BoundaryDetector(BoundaryDetectorCfg(0.5, 1, 1), vector_size=1)
         
@@ -25,46 +25,49 @@ def test_initialization_and_validation():
     with pytest.raises(ValueError, match="persistence must be >= 1"):
         BoundaryDetector(BoundaryDetectorCfg(0.5, 2, 0), vector_size=10)
 
-def test_baseline_initialization(detector):
-    """O primeiro passo não deve disparar hits, apenas definir o baseline."""
-    data = np.zeros(10)
+def test_baseline_initialization(detector: BoundaryDetector):
+    """The first step should not trigger any hits, only define the baseline."""
+    size = detector.size
+    data = np.full(size, 0.1, dtype=float)
     d_left, d_right = detector.update(data, step=0)
     
-    assert d_left == 0.0
-    assert d_right == 0.0
-    assert detector._baselines["left"] == 0.0
-    assert detector.results.first_hit_step is None
+    assert d_left ==pytest.approx(0.0)
+    assert d_right ==pytest.approx(0.0)
+    assert detector._baselines["left"] == pytest.approx(0.1)
+    assert detector._baselines["right"] == pytest.approx(0.1)
 
-def test_persistence_logic(detector):
-    """Valida que o hit só é confirmado após N passos consecutivos (Eq. 3)."""
-    # Baseline em 0.0
+    assert detector.results.first_hit_step is None
+    assert detector.results.first_side is None
+
+def test_persistence_logic(detector: BoundaryDetector):
+    """Validates that the hit is only confirmed after N consecutive steps (Eq. 3)."""
     detector.update(np.zeros(10), step=0)
     
-    # Passo 1 e 2: Acima do threshold (0.5), mas persistência é 3
+    # Steps 1 and 2: Above the threshold (0.5), but persistence is 3.
     data_high = np.ones(10)
     detector.update(data_high, step=1)
     detector.update(data_high, step=2)
     assert detector.results.first_hit_step is None
     
-    # Passo 3: Hit confirmado
+    # Step 3: Hit confirmed
     detector.update(data_high, step=3)
-    # hit_index = step - persistence -> 3 - 3 = 0
+    # hit_index = step - edge_persistence -> 3 - 3 = 0
     assert detector.results.first_hit_step == 0
     assert detector.results.first_side == "both"
 
-def test_noise_reset_persistence(detector):
-    """Garante que um valor abaixo do threshold reseta o contador de persistência."""
+def test_noise_reset_persistence(detector: BoundaryDetector):
+    """Ensures that a value below the threshold resets the persistence counter."""
     detector.update(np.zeros(10), step=0) # Baseline
     
-    # 2 passos acima
+    # 2 steps above
     detector.update(np.ones(10), step=1)
     detector.update(np.ones(10), step=2)
     
-    # 1 passo de ruído (volta para o baseline)
+    # 1 noise step (return to baseline)
     detector.update(np.zeros(10), step=3)
     assert detector._counters["left"] == 0
     
-    # Precisa de mais 3 passos agora
+    # 3 more steps needed now.
     detector.update(np.ones(10), step=4)
     detector.update(np.ones(10), step=5)
     detector.update(np.ones(10), step=6)
@@ -72,11 +75,11 @@ def test_noise_reset_persistence(detector):
     assert detector.results.first_hit_step == 6 - 3 # 3
 
 def test_side_specific_detection(base_cfg):
-    """Testa quando a borda atinge apenas um lado do vetor."""
+    """Tests when the edge only touches one side of the vector."""
     detector = BoundaryDetector(base_cfg, vector_size=10)
     detector.update(np.zeros(10), step=0) # Baseline
     
-    # Altera apenas o lado esquerdo (primeiros 2 elementos da janela)
+    # It only changes the left side (the first 2 elements of the window).
     left_spike = np.array([1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
     
     for i in range(1, 4):
@@ -87,11 +90,11 @@ def test_side_specific_detection(base_cfg):
     assert detector.results.first_side == "left"
 
 def test_simultaneous_hit_assignment(base_cfg):
-    """Testa a lógica de atribuição 'both' para detecções no mesmo passo."""
+    """Tests the 'both' assignment logic for detections in the same step."""
     detector = BoundaryDetector(base_cfg, vector_size=10)
     detector.update(np.zeros(10), step=0)
     
-    # Provoca hit nos dois lados ao mesmo tempo
+    # It creates a hit on both sides at the same time.
     data = np.ones(10)
     for i in range(1, 4):
         detector.update(data, step=i)
@@ -99,7 +102,7 @@ def test_simultaneous_hit_assignment(base_cfg):
     assert detector.results.first_side == "both"
     assert detector.results.step_left == detector.results.step_right
 
-def test_data_shape_mismatch(detector):
-    """Garante que o detector valide o tamanho do vetor de entrada."""
+def test_data_shape_mismatch(detector: BoundaryDetector):
+    """Ensures that the detector validates the size of the input vector."""
     with pytest.raises(ValueError, match="Data shape mismatch"):
-        detector.update(np.zeros(5), step=1) # Esperado 10
+        detector.update(np.zeros(5), step=1) # Expected 10

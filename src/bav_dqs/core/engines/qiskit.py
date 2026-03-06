@@ -7,9 +7,8 @@ from bav_dqs.utils.config_manager import ConfigManager
 
 def make_estimator(backend_cfg: Dict[str, Any]):
     """
-    Factory para instanciar o Estimator da Qiskit (V2).
-    Suporta: ideal (Statevector), aer (Simulação standard) e mps (Matrix Product State).
-    O MPS é crucial para redes 1D de Dirac devido à baixa conectividade/emaranhamento.
+    Factory for instantiating the Qiskit Estimator (V2).
+    Supports: ideal (Statevector), aer (Standard Simulation), and mps (Matrix Product State).
     """
     mode = str(ConfigManager.require_key(backend_cfg, "mode")).strip().lower()
 
@@ -26,11 +25,11 @@ def make_estimator(backend_cfg: Dict[str, Any]):
         from qiskit_aer import AerSimulator
         from qiskit_aer.primitives import EstimatorV2
         
-        # Configuração específica para simular cadeias longas 1D eficientemente
+        # Specific configuration for efficiently simulating long 1D chains.
         precision = float(backend_cfg.get("precision", 0.0) or 0.0)
         backend_options: Dict[str, Any] = {"method": "matrix_product_state"}
         
-        # Parâmetros de truncamento para controlar erro vs performance
+        # Truncation parameters to control error vs. performance
         if "matrix_product_state_max_bond_dimension" in backend_cfg:
             backend_options["matrix_product_state_max_bond_dimension"] = int(backend_cfg["matrix_product_state_max_bond_dimension"])
         if "matrix_product_state_truncation_threshold" in backend_cfg:
@@ -44,16 +43,16 @@ def make_estimator(backend_cfg: Dict[str, Any]):
     raise ValueError("backend.mode deve ser: 'ideal' | 'aer' | 'mps'.")
 
 def estimate_evs(estimator, circuit: QuantumCircuit, observables: List[SparsePauliOp]) -> np.ndarray:
-    """Executa a estimação de valores esperados de forma síncrona."""
+    """Performs the estimation of expected values ​​synchronously."""
     job = estimator.run([(circuit, observables)])
     result = job.result()
     
-    # Extração robusta dos dados do PubResult (Qiskit Primitives V2)
+    # Robust extraction of data from PubResult (Qiskit Primitives V2)
     datum = result[0]
     data = getattr(datum, "data", None)
     evs = getattr(data, "evs", None) if data is not None else None
     if evs is None:
-        raise RuntimeError("O resultado do Estimator não contém 'data.evs'.")
+        raise RuntimeError("The Estimator result does not contain 'data.evs'.")
     return np.asarray(evs, dtype=float)
 
 def ideal_expectation_values_real(
@@ -63,12 +62,12 @@ def ideal_expectation_values_real(
     abort_on_complex_evs: bool,
     complex_evs_imag_tol: float,
 ) -> np.ndarray:
-    """Cálculo exato via vetor de estado, ignorando/validando partes imaginárias."""
+    """Exact calculation via state vector, ignoring/validating imaginary parts."""
     vals: List[float] = []
     for obs in observables:
         ev = state.expectation_value(obs)
         if abs(ev.imag) > complex_evs_imag_tol and abort_on_complex_evs:
-            raise RuntimeError(f"Parte imaginária excessiva: {ev.imag}")
+            raise RuntimeError(f"Excessive imaginary part: {ev.imag}")
         vals.append(float(ev.real))
     return np.asarray(vals, dtype=float)
 
@@ -82,9 +81,9 @@ def _get_occupation(
     backend_cfg: Dict[str, Any],
     ctx: Dict[str, Any]
 ) -> np.ndarray:
-    """Calcula a ocupação baseada no modo de simulação (Ideal ou Estimator)."""
+    """It calculates occupancy based on the simulation mode (Ideal or Estimator)."""
     if mode == "ideal":
-        # Evolução via Statevector
+        # Evolution via Statevector
         if step_idx == 0:
             ctx["state"] = Statevector.from_instruction(init_qc)
         else:
@@ -97,7 +96,7 @@ def _get_occupation(
             complex_evs_imag_tol=float(backend_cfg.get("complex_evs_imag_tol", 0.0)),
         )
     else:
-        # Evolução via Circuito e Estimator
+        # Evolution via Circuit and Estimator
         if step_idx == 0:
             ctx["qc"].compose(init_qc, inplace=True)
         else:

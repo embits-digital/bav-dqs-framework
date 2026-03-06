@@ -1,16 +1,10 @@
 from __future__ import annotations
-
-# 1. Standard Library
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
-
-# 2. Third-party
 import numpy as np
 import yaml
 from qiskit import QuantumCircuit
-from qiskit.circuit.library import RXXGate, RYYGate, RZGate
 
-# 3. Local Application (bav_dqs)
 from bav_dqs.core.detectors.boundary_detector import (
     BoundaryDetector,
     BoundaryDetectorCfg,
@@ -23,47 +17,15 @@ from bav_dqs.core.operators.z_observable import build_z_observables
 from bav_dqs.utils.config_manager import ConfigManager
 from bav_dqs.utils.types.dirac_simulation import DiracSimulationModelCfg, DiracSimulationResult
 
-
 def build_initial_circuit(n_qubits: int) -> QuantumCircuit:
-    """Prepara o estado inicial: excitação única no centro da rede 1D."""
+    """Prepares the initial state: single excitation at the center of the 1D network."""
     n = int(n_qubits)
     if n < 2: raise ValueError("n_qubits >= 2")
     qc = QuantumCircuit(n)
     qc.x(n // 2) 
     return qc
 
-def dd_source_index(n_qubits: int) -> int:
-    n = int(n_qubits)
-    if n < 2:
-        raise ValueError("n_qubits must be >= 2")
-    return n // 2
-
-def build_step_circuit(n_qubits: int, cfg: DiracSimulationModelCfg) -> QuantumCircuit:
-    n = int(n_qubits)
-    if n < 2:
-        raise ValueError("n_qubits must be >= 2")
-
-    m = float(cfg.m)
-    w = float(cfg.w)
-    dt = float(cfg.dt)
-
-    qc = QuantumCircuit(n)
-
-    qc.x(0)
-
-    angle_z = m * dt
-    for q in range(n):
-        sign = 1.0 if q % 2 == 0 else -1.0
-        qc.append(RZGate(sign * angle_z), [q])
-
-    angle_xy = w * dt
-    for q in range(n - 1):
-        qc.append(RXXGate(angle_xy), [q, q + 1])
-        qc.append(RYYGate(angle_xy), [q, q + 1])
-
-    return qc
-
-def load_simulation_101_yaml(path: Path) -> Dict[str, Any]:
+def load_dirac_simulation_yaml(path: Path) -> Dict[str, Any]:
     ConfigManager.require_path(str(path))
     with open(path, "r", encoding="utf-8") as f:
         cfg = yaml.safe_load(f)
@@ -117,9 +79,9 @@ def parse_detector_cfg(cfg: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 def parse_model_cfg(cfg: Dict[str, Any]) -> Tuple[float, float, float, int]:
-    m = float(ConfigManager.require_path_key(cfg, "physics.mass_bare"))
-    w = float(ConfigManager.require_path_key(cfg, "physics.hopping_w"))
-    dt = float(ConfigManager.require_path_key(cfg, "physics.time_step_dt"))
+    m = float(ConfigManager.require_path_key(cfg, "physics.m"))
+    w = float(ConfigManager.require_path_key(cfg, "physics.w"))
+    dt = float(ConfigManager.require_path_key(cfg, "physics.dt"))
     max_steps = int(ConfigManager.require_path_key(cfg, "physics.max_steps"))
     return m, w, dt, max_steps
 
@@ -203,13 +165,13 @@ def _get_model_params(model_cfg: Dict[str, Any]) -> Tuple[float, float, float]:
 def _setup_detector(detector_cfg: Dict[str, Any], n: int) -> Tuple[BoundaryDetector, float, int]:
     thr = float(ConfigManager.require_key(detector_cfg, "threshold"))
     edge_window = int(ConfigManager.require_key(detector_cfg, "edge_window"))
-    persistence = int(ConfigManager.require_key(detector_cfg, "edge_persistence"))
+    edge_persistence = int(ConfigManager.require_key(detector_cfg, "edge_persistence"))
     
     det = BoundaryDetector(
-        BoundaryDetectorCfg(threshold=thr, edge_window=edge_window, persistence=persistence),
+        BoundaryDetectorCfg(threshold=thr, edge_window=edge_window, edge_persistence=edge_persistence),
         vector_size=n,
     )
-    return det, thr, persistence
+    return det, thr, edge_persistence
 
 def run_boundary_detection(
     *,
@@ -220,30 +182,30 @@ def run_boundary_detection(
     max_steps: int,
     logger=None,
 ) -> DiracSimulationResult:
-    """Orquestrador principal da simulação de Dirac."""
-    # 1. Setup e Validação
+    """Main orchestrator of the Dirac simulation."""
+    # Setup and Validation
     n, T = int(n_qubits), int(max_steps)
     _validate_inputs(n, T)
     
     m, w, dt = _get_model_params(model_cfg)
-    det, thr, persistence = _setup_detector(detector_cfg, n)
+    det, thr, edge_persistence = _setup_detector(detector_cfg, n)
     mode, estimator, backend_meta = make_estimator(dict(backend_cfg))
     
-    # 2. Preparação de Componentes
+    # Component Preparation
     model_params = DiracSimulationModelCfg(m=m, w=w, dt=dt)
     init_qc = build_initial_circuit(n)
     step_qc = build_step_circuit(n, model_params)
     
-    # 3. Loop de Evolução
+    # Evolution Loop
     history_data = _run_simulation_loop(
         n, T, mode, estimator, step_qc, init_qc, 
-        backend_cfg, det, thr, persistence, logger
+        backend_cfg, det, thr, edge_persistence, logger
     )
 
-    # 4. Consolidação Física dos Resultados
+    # Physical Consolidation of Results
     return _build_result(n, dt, m, w, det, detector_cfg, mode, backend_meta, history_data)
 
-def _run_simulation_loop(n, T, mode, estimator, step_qc, init_qc, backend_cfg, det: BoundaryDetector, thr, persistence, logger):
+def _run_simulation_loop(n, T, mode, estimator, step_qc, init_qc, backend_cfg, det: BoundaryDetector, thr, edge_persistence, logger):
     observables = build_z_observables(n)
     log_every = int(backend_cfg.get("log_every_steps", 0))
     state_ctx = {"state": None, "qc": QuantumCircuit(n)}
@@ -258,7 +220,7 @@ def _run_simulation_loop(n, T, mode, estimator, step_qc, init_qc, backend_cfg, d
         res["dL"].append(dl)
         res["dR"].append(dr)
         
-        _update_hit_logic(res, dl, dr, thr, persistence, step_idx)
+        _update_hit_logic(res, dl, dr, thr, edge_persistence, step_idx)
         
         if logger and log_every > 0 and (step_idx % log_every == 0 or step_idx == T):
             logger.info(f"{mode} step={step_idx}/{T} dL={dl:.6f} dR={dr:.6f}")

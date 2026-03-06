@@ -9,7 +9,7 @@ from bav_dqs.utils.config_manager import ConfigManager
 def mock_yaml_content():
     return {
         "experiment": {"id": "TEST_001"},
-        "physics": {"mass_bare": 0.5, "widths": [20, 40]},
+        "physics": {"m": 0.5, "widths": [20, 40]},
         "backend": {"logging": {"enabled": True}}
     }
 
@@ -49,18 +49,20 @@ def test_path_validation_failure():
 def test_cli_update_override(mock_yaml_content):
     """Validates whether updating via the dictionary (CLI) overwrites the YAML."""
     cfg = ConfigManager(mock_yaml_content)
-    # Simulate --physics.mass_bare 0.9 via CLI
-    cli_updates = {"physics": {"mass_bare": 0.9}}
+    # Simulate --physics.m 0.9 via CLI
+    cli_updates = {"physics": {"m": 0.9}}
     
-    cfg.update_from_args({"manual_override": "active"})
-    assert cfg.get("manual_override") == "active"
+    cfg.update_from_args(cli_updates)
+    assert cfg.get("physics.m") == pytest.approx(0.9) 
+    assert cfg.get("physics.widths") == [20, 40]
+    assert cfg.get("experiment.id") == "TEST_001"
 
 def test_wrong_type_access(mock_yaml_content):
     """Guarantees an error when attempting to access the depth of a value that is not a dict."""
     cfg = ConfigManager(mock_yaml_content)
-    # mass_bare is a float, it cannot have subkeys.
+    # m is a float, it cannot have subkeys.
     with pytest.raises(TypeError, match="Expected dict at path segment"):
-        cfg.get("physics.mass_bare.invalid_sub_key")
+        cfg.get("physics.m.invalid_sub_key")
 
 def test_missing_key_error(mock_yaml_content):
     """Ensures that missing keys will trigger a KeyError."""

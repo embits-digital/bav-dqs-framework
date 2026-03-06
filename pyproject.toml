@@ -59,7 +59,8 @@ include-package-data = true
 
 [tool.setuptools.packages.find]
 where = ["src"]
-include = ["bav_dqs*"]
+include = ["bav_dqs", "bav_dqs.*"]
+namespaces = false
 
 [tool.black]
 line-length = 88

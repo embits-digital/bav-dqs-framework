@@ -68,5 +68,22 @@ class ConfigManager:
         return cls(data)
 
     def update_from_args(self, args: Dict[str, Any]):
-        """Merges arguments from the CLI (e.g., argparse) into the current configuration."""
-        self._config.update({k: v for k, v in args.items() if v is not None})
+        """
+        Merges arguments from the CLI (e.g., argparse) into the current configuration.
+        Preserves existing keys that were not sent via the CLI.
+        """
+        def deep_update(source: Dict[str, Any], overrides: Dict[str, Any]):
+            for key, value in overrides.items():
+                if value is None:
+                    continue
+                if (
+                    key in source 
+                    and isinstance(source[key], dict) 
+                    and isinstance(value, dict)
+                ):
+                    deep_update(source[key], value)
+                else:
+                    source[key] = value
+            return source
+        
+        deep_update(self._config, args)

@@ -1,26 +1,26 @@
 import pytest
 import numpy as np
-from pathlib import Path
 from bav_dqs.io.data_manager import DataManager
 
-# --- Fixtures Atualizadas ---
+# --- Fixtures ---
 
 @pytest.fixture
 def mock_config():
+    """Simulated configuration for HDF5 global metadata."""
     return {
-        "physics": {"mass_bare": 0.5},
+        "physics": {"m": 0.5},
         "experiment": {"id": "TEST_EXP_001", "schema_version": "1.0.0"}
     }
 
 @pytest.fixture
 def generic_sim_data():
-    """Dados genéricos seguindo a nova estrutura de dicionários."""
+    """Simulation data following the framework's standard dictionary structure."""
     return {
         "group_name": "n_qubits_4",
         "run_id": "run_001",
         "datasets": {
             "t_full": np.linspace(0, 1, 10),
-            "occ_full": np.random.rand(10, 4),
+            "occ_full": np.random.default_rng(seed = 137).random((10, 4)),
             "metrics": np.array([0.1, 0.2, 0.3])
         },
         "attributes": {
@@ -30,76 +30,88 @@ def generic_sim_data():
         }
     }
 
-# --- Testes de Integração Refatorados ---
+# --- Integration Tests ---
 
 def test_full_io_cycle(tmp_path, mock_config, generic_sim_data):
-    """Testa o ciclo completo: DataManager -> Writer Genérico -> Reader Genérico."""
+    """
+    Validates the complete persistence cycle: DataManager -> Writer -> Reader.
+    Ensures that metadata, numeric datasets, and complex attributes are preserved.
+    """
     h5_path = tmp_path / "test_refactored.h5"
     
-    # 1. Inicialização e Escrita Genérica
+    # DataManager Initialization
     dm = DataManager(
         file_path=h5_path, 
         config=mock_config,
         experiment_id=mock_config["experiment"]["id"]
     )
     
+    # Data writing
     writer = dm.get_writer()
     writer.save_run(**generic_sim_data)
     
-    # 2. Verificação de Leitura
+    # Verification via Reader
     with dm.open_reader() as reader:
-        # Testa metadados globais (recuperados do snapshot de inicialização)
+        # Global Metadata
         global_meta = reader.get_global_metadata()
         assert global_meta["experiment_id"] == "TEST_EXP_001"
-        assert global_meta["config"]["physics"]["mass_bare"] == 0.5
+        assert global_meta["config"]["physics"]["m"] == pytest.approx(0.5)
         
-        # Testa recuperação de Datasets (Numéricos)
+        # Datasets (NumPy Arrays)
         data = reader.get_run_data(
             group_name=generic_sim_data["group_name"], 
             run_id=generic_sim_data["run_id"]
         )
-        assert "t_full" in data
-        assert data["t_full"].shape == (10,)
+        np.testing.assert_array_equal(data["t_full"], generic_sim_data["datasets"]["t_full"])
         assert data["occ_full"].shape == (10, 4)
         
-        # Testa recuperação de Atributos (Metadados da Run)
+        # Attributes (YAML/Complex Serialization)
         attrs = reader.get_run_attributes(
             group_name=generic_sim_data["group_name"], 
             run_id=generic_sim_data["run_id"]
         )
         assert attrs["first_hit_step"] == 5
-        assert attrs["params"]["theta"] == 0.1  # Verificando desserialização YAML
+        assert attrs["params"]["theta"] == pytest.approx(0.1)
 
 def test_writer_collision_prevention(tmp_path, mock_config, generic_sim_data):
-    """Garante que o Writer impede sobrescrever o mesmo run_id no mesmo grupo."""
+    """Ensures that Writer throws an error when attempting to overwrite an existing run_id."""
     h5_path = tmp_path / "collision.h5"
     dm = DataManager(h5_path, config=mock_config)
     writer = dm.get_writer()
     
     writer.save_run(**generic_sim_data)
     
-    # Segunda tentativa com mesmo group e run_id deve falhar
-    with pytest.raises(ValueError, match="Colisão de run_id"):
+    run_id = generic_sim_data["run_id"]
+    group = generic_sim_data["group_name"]
+
+    expected_error = f"Collision with run_id: '{run_id}' already exists in '{group}'"   
+    with pytest.raises(ValueError, match=expected_error):
         writer.save_run(**generic_sim_data)
 
 def test_reader_file_not_found():
-    """Garante erro claro ao tentar ler arquivo inexistente via DataManager."""
-    dm = DataManager("non_existent.h5")
+    """Checks if the DataManager raises a FileNotFoundError for non-existent files."""
+    dm = DataManager("non_existent_file_999.h5")
     with pytest.raises(FileNotFoundError):
         dm.open_reader()
 
 def test_complex_attribute_serialization(tmp_path, mock_config):
-    """Testa se estruturas complexas (dict/list) são preservadas via YAML no HDF5."""
+    """
+    Checks if nested dictionaries and lists are correctly serialized
+    in HDF5 format (usually via an internal YAML or JSON string).
+    """
     h5_path = tmp_path / "complex_attrs.h5"
     dm = DataManager(h5_path, config=mock_config)
     writer = dm.get_writer()
     
-    complex_attrs = {"nested": {"list": [1, 2, 3], "flag": True}}
+    complex_attrs = {
+        "nested": {"list": [1, 2, 3], "flag": True},
+        "metadata": "scientific_data"
+    }
     
     writer.save_run(
         group_name="test_group",
         run_id="run_1",
-        datasets={"dummy": np.array([1])},
+        datasets={"dummy": np.array([1.0])},
         attributes=complex_attrs
     )
     
@@ -107,9 +119,10 @@ def test_complex_attribute_serialization(tmp_path, mock_config):
         recovered = reader.get_run_attributes("test_group", "run_1")
         assert recovered["nested"]["list"] == [1, 2, 3]
         assert recovered["nested"]["flag"] is True
+        assert isinstance(recovered["nested"]["list"], list)
 
-def test_list_helpers(tmp_path, mock_config, generic_sim_data):
-    """Testa os métodos de listagem de grupos e runs."""
+def test_listing_methods(tmp_path, mock_config, generic_sim_data):
+    """Tests the Reader's ability to list the file hierarchy (groups and runs)."""
     h5_path = tmp_path / "lists.h5"
     dm = DataManager(h5_path, config=mock_config)
     writer = dm.get_writer()
