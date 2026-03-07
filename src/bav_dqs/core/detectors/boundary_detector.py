@@ -1,4 +1,5 @@
 from __future__ import annotations
+from dataclasses import replace
 from typing import Optional, Tuple, Dict
 import numpy as np
 
@@ -25,10 +26,18 @@ class BoundaryDetector:
             raise ValueError(f"Invalid edge_window: {self.cfg.edge_window}")
         if self.cfg.edge_persistence < 1: raise ValueError("persistence must be >= 1")
 
+    def update_threshold(self, new_threshold: float):
+        """
+        Atualiza o limite de detecção (theta) dinamicamente.
+        Essencial para calibração de 5-sigma em hardware real.
+        """
+        self.cfg = replace(self.cfg, threshold=float(new_threshold))
+        print(f"[Detector] Threshold updated to: {self.cfg.threshold:.6f}")
+
     def _calculate_edge_means(self, data: np.ndarray) -> Tuple[float, float]:
         w = self.cfg.edge_window
-        left = float(np.mean(data[:w]))
-        right = float(np.mean(data[-w:]))
+        left = float(np.max(np.abs(data[:w]))) # Usar MAX em vez de MEAN para correlações
+        right = float(np.max(np.abs(data[-w:])))
         return left, right
 
     def update(self, data: np.ndarray, step: int) -> Tuple[float, float]:

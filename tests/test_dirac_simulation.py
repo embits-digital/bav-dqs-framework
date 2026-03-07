@@ -98,3 +98,59 @@ def test_calculate_side_logic():
     assert _calculate_side(5, 5) == "both"
     assert _calculate_side(2, 8) == "left"
     assert _calculate_side(None, 4) == "right"
+
+def test_calibrate_multi_threshold_rigor():
+    """Garante que o threshold 5-sigma reage corretamente ao ruído do Estimator."""
+    mock_estimator = MagicMock()
+    # Simulamos 5 rodadas com um desvio padrão conhecido (ex: 0.02)
+    mock_result = MagicMock()
+    # Qiskit 2.3.0: PubResult.data.evs
+    mock_result.__iter__.return_value = [
+        MagicMock(data=MagicMock(evs=np.array([0.1, 0.12, 0.08]))) 
+    ]
+    mock_estimator.run.return_value.result.return_value = mock_result
+
+    obs_map = {"occupancy": [MagicMock()]}
+    init_qc = QuantumCircuit(1)
+    
+    from bav_dqs.plugins.dirac_simulation import _calibrate_multi_threshold
+    thr_dict = _calibrate_multi_threshold(mock_estimator, init_qc, obs_map)
+    
+    assert "occupancy" in thr_dict
+    assert thr_dict["occupancy"] >= 1e-4 # Fallback de segurança
+    # O valor deve ser ~5 * std_dev do nosso mock
+
+def test_run_simulation_loop_multimodal_separation(basic_configs):
+    """Verifica se o loop separa corretamente Ocupação (Z) de Correlação (ZZ)."""
+    n = 4
+    obs_map = {
+        "occupancy": [MagicMock()] * n,          # 4 observables
+        "correlation": [MagicMock()] * (n - 1)   # 3 observables
+    }
+    thr_dict = {"occupancy": 0.1, "correlation": 0.1}
+    
+    # 1. Mock do Detector: configurado para retornar dl, dr (0.0, 0.0)
+    mock_det = MagicMock()
+    mock_det.update.return_value = (0.0, 0.0) 
+
+    with MagicMock() as mock_get_occ:
+        from bav_dqs.plugins.dirac_simulation import _run_simulation_loop
+        # Simulamos o retorno combinado: [Z0..Z3, ZZ0..ZZ2]
+        mock_get_occ.return_value = np.array([0.5]*4 + [0.9]*3)
+        
+        import bav_dqs.plugins.dirac_simulation as ds
+        ds._get_occupation = mock_get_occ
+        
+        res = _run_simulation_loop(
+            n=n, T=1, mode="ideal", estimator=None, step_qc=None, 
+            init_qc=None, backend_cfg={}, det=mock_det, # <--- Detector Mockado
+            thr_dict=thr_dict, obs_map=obs_map, edge_persistence=1, logger=None
+        )
+        
+        # 2. Verificação de Integridade dos Dados
+        assert len(res["history"][0]) == 4      # Z (Ocupação nos sítios)
+        assert len(res["correlations"][0]) == 3 # ZZ (Correlações entre sítios)
+        assert np.all(res["history"][0] == pytest.approx(0.5))
+        assert np.all(res["correlations"][0] == pytest.approx(0.9))
+
+

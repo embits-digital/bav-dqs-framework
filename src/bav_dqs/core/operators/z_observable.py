@@ -12,3 +12,4 @@ def build_z_observables(n_qubits: int) -> List[SparsePauliOp]:
         pauli = ("I" * j) + "Z" + ("I" * (n - j - 1))
         obs.append(SparsePauliOp.from_list([(pauli, 1.0)]))
     return obs
+

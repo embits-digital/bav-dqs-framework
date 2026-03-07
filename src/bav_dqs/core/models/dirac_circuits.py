@@ -23,14 +23,12 @@ def build_step_circuit(n_qubits: int, cfg: DiracSimulationModelCfg) -> QuantumCi
 
     qc = QuantumCircuit(n)
 
-    qc.x(0)
-
-    angle_z = m * dt
+    angle_z = 2.0 * m * dt
     for q in range(n):
         sign = 1.0 if q % 2 == 0 else -1.0
         qc.append(RZGate(sign * angle_z), [q])
 
-    angle_xy = w * dt
+    angle_xy = 2.0 * w * dt
     for q in range(n - 1):
         qc.append(RXXGate(angle_xy), [q, q + 1])
         qc.append(RYYGate(angle_xy), [q, q + 1])

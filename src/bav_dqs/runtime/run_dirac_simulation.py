@@ -7,7 +7,7 @@ import datetime as _date
 import numpy as np
 
 from bav_dqs.io.data_manager import DataManager
-from bav_dqs.plugins.dirac_simulation import load_dirac_simulation_yaml, parse_detector_cfg, parse_model_cfg, parse_richardson_cfg, parse_widths, run_boundary_detection, run_dd, parse_backend_cfg
+from bav_dqs.plugins.dirac_simulation import load_dirac_simulation_yaml, parse_detector_cfg, parse_model_cfg, parse_richardson_cfg, parse_widths, run_boundary_detection, parse_backend_cfg
 
 def _setup_logger(enabled: bool) -> Optional[logging.Logger]:
     if not enabled:
@@ -94,11 +94,8 @@ def main() -> None:
     rich_cfg = parse_richardson_cfg(cfg)
 
     logger = _setup_logger(bool(backend_cfg.get("logging_enabled", False)))
-
     logger.info("Wrote M = %s", str(m))
-
     logger.info("Wrote W = %s", str(w))
-
     logger.info("Wrote DT_FULL = %s", str(dt_full))
 
     if logger is not None:
@@ -130,7 +127,7 @@ def main() -> None:
 
     manager = DataManager(
         file_path=out_path,
-        config_path=args.config,
+        config=str(args.config),
         schema_version=schema_version,
         experiment_id=exp_id,
     )
@@ -149,6 +146,13 @@ def main() -> None:
             max_steps=max_steps_full,
             logger=logger,
         )
+
+        if logger:
+            fh_f = res_full.first_hit_step if res_full.first_hit_step is not None else "None"
+            if res_full.first_hit_step is not None:
+                logger.info("Simulation FULL (dt=%.6g) completed. First hit at step: %s", dt_full, str(fh_f))
+            else:
+                logger.info("Simulation FULL (dt=%.6g) completed. No hits were detected.", dt_full)
         
         # 2. EXECUÇÃO: Passo de tempo HALF (dt/2)
         dt_half = dt_full / 2.0
@@ -160,6 +164,13 @@ def main() -> None:
             max_steps=max_steps_full * 2,
             logger=logger,
         )
+
+        if logger:
+            fh_h = res_half.first_hit_step if res_half.first_hit_step is not None else "None"
+            if res_half.first_hit_step is not None:
+                logger.info("Simulation HALF (dt=%.6g) completed. First hit at step: %s", dt_half, str(fh_h))
+            else:
+                logger.info("Simulation HALF (dt=%.6g) completed.No hits were detected.", dt_half)
 
         # 3. PROCESSAMENTO E ALINHAMENTO
         occ_full = np.asarray(res_full.history, dtype=float)
@@ -199,19 +210,25 @@ def main() -> None:
             "metric_rich_right": m_rich_r,
         }
 
-        # Agrupamento de Metadados e Escalares
+        datasets = {k: v for k, v in datasets.items() if v is not None}
+
         attributes = {
-            "n_qubits": n_qubits,
-            "dt_full": dt_full,
-            "dt_half": dt_half,
-            "first_hit_full": res_full.first_hit_step,
-            "first_hit_half": res_half.first_hit_step,
-            "threshold": detector_cfg["threshold"],
-            "backend_mode": backend_cfg["mode"],
-            "richardson_enabled": rich_enabled,
-            # Injeção de metadados extras do experimento
-            **{f"meta_{k}": v for k, v in (cfg.get("experiment", {})).items()}
+            "n_qubits": int(n_qubits),
+            "dt_full": float(dt_full),
+            "dt_half": float(dt_half),
+            "first_hit_full": res_full.first_hit_step if res_full.first_hit_step is not None else -1,
+            "first_hit_half": res_half.first_hit_step if res_half.first_hit_step is not None else -1,
+            "threshold": float(detector_cfg["threshold"]),
+            "backend_mode": str(backend_cfg["mode"]),
+            "richardson_enabled": bool(rich_enabled),
         }
+
+        for k, v in cfg.get("experiment", {}).items():
+            if isinstance(v, (list, dict)) or v is None:
+                attributes[f"meta_{k}"] = str(v)
+            else:
+                attributes[f"meta_{k}"] = v
+
 
         # Persist ALL steps (full + half raw). Provide aligned + rich as optional derived artifacts.
         writer.save_run(
@@ -223,7 +240,7 @@ def main() -> None:
 
 
     if logger is not None:
-        logger.info("Simulation pipeline complete. HDF5: %s", manager.get_file_path())
+        logger.info("Simulation pipeline complete. HDF5: %s", manager.file_path)
 
 if __name__ == "__main__":
     main()

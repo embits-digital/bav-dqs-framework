@@ -60,7 +60,15 @@ class Writer:
     @staticmethod
     def _serialize_attr(v: Any) -> Any:
         """Converts complex data types to formats accepted by HDF5."""
-        if isinstance(v, (dict, list, tuple)):
+        # Se for um tipo básico que o HDF5 aceita nativamente, retorna ele
+        if isinstance(v, (int, float, str, bool, np.int64, np.float64)):
+            return v
+        # Se for None, vira string
+        if v is None: 
+            return "none"
+        # Para QUALQUER outra coisa (dict, list, objetos customizados), força YAML string
+        try:
             return yaml.safe_dump(v, sort_keys=True)
-        if v is None: return "none"
-        return v
+        except Exception:
+            return str(v) # Fallback final para string simples
+

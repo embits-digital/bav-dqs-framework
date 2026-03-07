@@ -106,3 +106,51 @@ def test_data_shape_mismatch(detector: BoundaryDetector):
     """Ensures that the detector validates the size of the input vector."""
     with pytest.raises(ValueError, match="Data shape mismatch"):
         detector.update(np.zeros(5), step=1) # Expected 10
+
+def test_dynamic_threshold_update(detector: BoundaryDetector):
+    """Garante que o detector respeita a recalibração de threshold (5-sigma)."""
+    detector.update(np.zeros(10), step=0) # Baseline em 0.0
+    
+    # Caso 1: Com threshold original (0.5), um sinal de 0.4 NÃO deve disparar contador
+    data_low = np.full(10, 0.4)
+    detector.update(data_low, step=1)
+    assert detector._counters["left"] == 0
+    
+    # Caso 2: Atualizamos dinamicamente para 0.3 (Simulando calibração em hardware ruidoso)
+    detector.update_threshold(0.3)
+    detector.update(data_low, step=2)
+    
+    # Agora o contador deve subir, pois 0.4 > 0.3
+    assert detector._counters["left"] == 1
+
+def test_edge_window_sensitivity_max(base_cfg):
+    """Valida se o detector usa o valor MÁXIMO da janela (sensibilidade a picos)."""
+    # Janela de tamanho 2 (base_cfg.edge_window=2)
+    detector = BoundaryDetector(base_cfg, vector_size=10)
+    detector.update(np.zeros(10), step=0) # Baseline
+    
+    # Apenas o SEGUNDO qubit da janela esquerda sobe (índice 1).
+    # Se usasse média (mean), o valor seria 0.4 (não dispararia thr=0.5).
+    # Como usa MÁX, o valor é 0.8 (deve disparar!).
+    spike = np.zeros(10)
+    spike[1] = 0.8 
+    
+    detector.update(spike, step=1)
+    assert detector._counters["left"] == 1
+
+def test_detector_reset_integrity(detector: BoundaryDetector):
+    """Garante que o reset limpa todos os estados internos para uma nova run."""
+    detector.update(np.zeros(10), step=0)
+    detector.update(np.ones(10), step=1)
+    detector.update(np.ones(10), step=2)
+    detector.update(np.ones(10), step=3) # Hit confirmado
+    
+    assert detector.results.first_hit_step is not None
+    
+    detector.reset()
+    
+    assert detector._baselines["left"] is None
+    assert detector._counters["left"] == 0
+    assert detector.results.first_hit_step is None
+    assert detector.results.step_left is None
+
