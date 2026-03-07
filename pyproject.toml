@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "bav-dqs-framework"
-version = "1.0.2.dev"
+version = "1.0.3.dev"
 description = "Boundary-Aware Validity Framework for Digital Quantum Simulation"
 readme = "README.md"
 requires-python = ">=3.10"
