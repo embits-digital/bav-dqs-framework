@@ -32,7 +32,6 @@ def load_dirac_simulation_yaml(path: Path) -> Dict[str, Any]:
         cfg = yaml.safe_load(f)
     if not isinstance(cfg, dict):
         raise ValueError("Config must be a YAML mapping at the root.")
-    # minimal required
     _ = ConfigManager.require_path_key(cfg, "experiment.id")
     _ = ConfigManager.require_path_key(cfg, "experiment.schema_version")
     _ = ConfigManager.require_path_key(cfg, "lattice.widths")
@@ -61,7 +60,6 @@ def parse_backend_cfg(cfg: Dict[str, Any]) -> Dict[str, Any]:
     out["abort_on_complex_evs"] = bool(backend.get("abort_on_complex_evs", False))
     out["complex_evs_imag_tol"] = float(backend.get("complex_evs_imag_tol", 0.0))
 
-    # logging policy
     log_cfg = backend.get("logging", {})
     if isinstance(log_cfg, dict):
         out["logging_enabled"] = bool(log_cfg.get("enabled", False))
@@ -146,46 +144,30 @@ def _build_result(n, dt, m, w, det: BoundaryDetector, d_cfg, mode, meta, res) ->
     t_hit = float(det.results.first_hit_step) * dt if det.results.first_hit_step else None
     d_hit_eff = _get_d_hit_eff(side, d_l_eff, d_r_eff)
     v_est = (d_hit_eff / t_hit) if t_hit and t_hit > 0 else None
-
-    # NOVIDADE 2026: Detecção de Causalidade (Lieb-Robinson)
-    # Extraímos o hit de correlação se ele existir no dicionário de resultados
     h_causal = res.get("causal_hits", [None, None])
     first_causal_hit = min([h for h in h_causal if h is not None], default=None)
 
     return DiracSimulationResult(
-        # Dados de Evolução (Multimodal)
         history=np.array(res["history"]),
-        correlations=np.array(res.get("correlations", [])), # Matriz ZZ para o Heatmap
-        
-        # Métricas de Borda (Massa)
+        correlations=np.array(res.get("correlations", [])),
         first_hit_step=det.results.first_hit_step,
         first_hit_step_left=h_left,
         first_hit_step_right=h_right,
         first_hit_side=side,
         d_left=np.array(res["dL"]),
         d_right=np.array(res["dR"]),
-        
-        # Métricas de Causalidade (Informação)
         first_causal_hit_step=first_causal_hit,
-        
-        # Parâmetros Físicos e Geometria
         dt=dt, t_hit=t_hit, source_index=src,
         x_left_eff=x_l, x_right_eff=x_r, 
         d_left_eff=d_l_eff, d_right_eff=d_r_eff,
         d_hit_eff=d_hit_eff, v_hit_est=v_est, 
         n_qubits=n, m=m, w=w,
-
-        # Blindagem do Revisor: Metadados de 5-sigma
-        # Agora salvamos o threshold REAL (calibrado) vs o sugerido no YAML
         detector_threshold=det.cfg.threshold, 
         detector_edge_window=d_cfg["edge_window"],
         detector_persistence=d_cfg["edge_persistence"],
-        
-        # Backend e Contexto
         backend_mode=mode,
         backend_meta=meta
     )
-
 
 def _validate_inputs(n: int, T: int) -> None:
     if n < 2:
@@ -210,43 +192,10 @@ def _setup_detector(detector_cfg: Dict[str, Any], n: int) -> Tuple[BoundaryDetec
     )
     return det, thr, edge_persistence
 
-def _calibrate_threshold(estimator, circuit, observables) -> float:
-    """
-    Determina o threshold dinamicamente usando rigor de 5-sigma.
-    """
-    n_obs = len(observables)
-    all_values = []
-    
-    # Rodamos 5 'shots' de amostragem para capturar a variância do backend
-    for _ in range(5):
-        # O Qiskit Estimator quer uma lista de circuitos pareada com observáveis
-        job = estimator.run([circuit] * n_obs, observables)
-        result = job.result()
-        all_values.append(result.values) # result.values é um array de floats
-    
-    # Transformamos em um array numpy para estatística
-    # all_values shape: (5, n_qubits)
-    data = np.array(all_values)
-    
-    # Calculamos o desvio padrão global do ruído de leitura (shot noise)
-    std_dev = np.std(data)
-    
-    # O fator 5.0 (5-sigma) é o padrão ouro para "descoberta" em física
-    # Isso garante que a detecção da borda não seja um 'leak' estatístico
-    calibrated_theta = 5.0 * std_dev
-    
-    # Fallback de segurança: se for simulador ideal (std=0), usamos um mínimo
-    return max(calibrated_theta, 1e-4)
-
-import numpy as np
-
-import numpy as np
-
 def _calibrate_multi_threshold(estimator, circuit, obs_map: dict) -> dict:
     thresholds = {}
     
     for label, observables in obs_map.items():
-        n_obs = len(observables)
         all_values = []
         
         for _ in range(5):
@@ -254,19 +203,13 @@ def _calibrate_multi_threshold(estimator, circuit, obs_map: dict) -> dict:
             pubs = [(circuit, obs) for obs in observables]
             job = estimator.run(pubs)
             result = job.result()
-            
-            # CORREÇÃO: Extrair o array numérico de 'evs' de cada PubResult
-            # O .data.evs no Qiskit 2.x retorna um ndarray para cada PUB
             step_values = [pub.data.evs for pub in result]
             all_values.append(step_values)
         
-        # Converte para um array numpy de floats puro: shape (5, n_obs)
         data = np.array(all_values, dtype=float)
         
-        # Agora o std() funciona perfeitamente
         std_dev = np.std(data)
         
-        # 5-sigma para blindagem contra o revisor
         thresholds[label] = max(5.0 * std_dev, 1e-4)
         
         print(f"[BAV-DQS] {label} calibrated at 5-sigma: {thresholds[label]:.5f}")
@@ -288,23 +231,19 @@ def run_boundary_detection(
     _validate_inputs(n, T)
     
     m, w, dt = _get_model_params(model_cfg)
-    
-    # 1. Setup inicial do Detector
+
     det, thr_yaml, edge_persistence = _setup_detector(detector_cfg, n)
     mode, estimator, backend_meta = make_estimator(dict(backend_cfg))
     
-    # 2. Preparação de Componentes
     model_params = DiracSimulationModelCfg(m=m, w=w, dt=dt)
     init_qc = build_initial_circuit(n)
     
-    # Mapa de observáveis para os diferentes diagnósticos
     obs_map = {}
     if "occupancy" in diagnostic_modes:
         obs_map["occupancy"] = build_z_observables(n)
     if "correlation" in diagnostic_modes:
         obs_map["correlation"] = build_correlation_observables(n, reference_qubit=n // 2)
 
-    # 3. CALIBRAÇÃO (5-sigma para blindagem contra revisor)
     if detector_cfg.get("auto_threshold", False):
         thr_dict = _calibrate_multi_threshold(estimator, init_qc, obs_map)
         thr_main = thr_dict.get("occupancy", thr_yaml)
@@ -314,7 +253,6 @@ def run_boundary_detection(
 
     step_qc = build_step_circuit(n, model_params)
     
-    # 4. Evolution Loop
     history_data = _run_simulation_loop(
         n=n, T=T, mode=mode, estimator=estimator, 
         step_qc=step_qc, init_qc=init_qc, 
@@ -325,7 +263,6 @@ def run_boundary_detection(
 
     return _build_result(n, dt, m, w, det, detector_cfg, mode, backend_meta, history_data)
 
-
 def _run_simulation_loop(
     n: int, T: int, mode: str, estimator, step_qc, init_qc, 
     backend_cfg, det: BoundaryDetector, thr_dict: Dict[str, float], 
@@ -335,7 +272,6 @@ def _run_simulation_loop(
     log_every = int(backend_cfg.get("log_every_steps", 0))
     state_ctx = {"state": None, "qc": QuantumCircuit(n)}
     
-    # Concatenamos os observáveis para uma única chamada eficiente ao backend
     all_obs = obs_map.get("occupancy", []) + obs_map.get("correlation", [])
     split_idx = len(obs_map.get("occupancy", []))
 
@@ -345,21 +281,16 @@ def _run_simulation_loop(
     }
 
     for step_idx in range(T + 1):
-        # Usamos a sua função original _get_occupation
-        # Ela retornará a lista completa de valores esperados (Z + ZZ)
         combined_values = _get_occupation(
             step_idx, mode, estimator, step_qc, init_qc, all_obs, backend_cfg, state_ctx
         )
         
-        # Separa os dados de volta em ocupação e correlação
         occ = np.array(combined_values[:split_idx])
         corr = np.array(combined_values[split_idx:])
 
-        # Atualização do Detector e Lógica de Hit (usando funções originais)
         dl, dr = det.update(occ, step=step_idx)
         _update_hit_logic(res, dl, dr, thr_dict["occupancy"], edge_persistence, step_idx)
         
-        # Armazenamento
         res["history"].append(occ)
         res["correlations"].append(corr)
         res["dL"].append(dl)
@@ -369,4 +300,3 @@ def _run_simulation_loop(
             logger.info(f"Step {step_idx}/{T} | dL={dl:.6f} dR={dr:.6f}")
 
     return res
-

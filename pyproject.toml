@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "bav-dqs-framework"
-version = "1.0.3.dev"
+version = "1.0.5.preprint"
 description = "Boundary-Aware Validity Framework for Digital Quantum Simulation"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -16,9 +16,12 @@ authors = [
 
 keywords = [
   "quantum-simulation",
+  "boundary-aware-validity",
+  "causal-isolation",
   "lattice-field-theory",
+  "spectral-inference",
+  "inferential-admissibility",
   "zitterbewegung",
-  "causal-inference",
   "quantum-computing"
 ]
 

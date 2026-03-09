@@ -1,34 +1,33 @@
 experiment:
   id: "dirac_simulation"
-  schema_version: "DiracSimulation_002"
+  schema_version: "DiracSimulation_003"
   description: "Deterministic lattice evolution, causal boundary instrumentation, Richardson pairing"
 
 physics:
-  m: 0.2
-  w: 1.0
-  dt: 0.01
-  max_steps: 420
+  m: 0.5
+  w: 0.5
+  dt: 0.002
+  max_steps: 2048
 
 lattice:
   widths: [4, 6, 8, 12, 16, 20] 
   threshold: 0.02
-  auto_threshold: true
+  auto_threshold: false
   sigma_multiplier: 5.0    # (5-sigma)
-  edge_window: 2      
+  edge_window: 3      
   edge_persistence: 3
 
-  observation_mode: "correlation" 
+  observation_mode: "occupancy" 
   reference_qubit: "center"
 
 backend:
   mode: "ideal"       
   precision: 0.02
-  shots: 8192
+  shots: 1024
   optimization_level: 3
   logging:
     enabled: true
     every_steps: 10
-
 
 richardson:
   enabled: true

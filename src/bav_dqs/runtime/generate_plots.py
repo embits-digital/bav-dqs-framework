@@ -12,9 +12,9 @@ COLOR_BASELINE = 'tab:gray'
 COLOR_HIGHLIGHT = 'tab:orange'
 
 class ScientificReport:
-    def __init__(self, data_file: Path):
-        self.data_file = data_file
-        self.output_dir = data_file.parent / "scientific_report_v2026"
+    def __init__(self, data-file: Path):
+        self.data-file = data-file
+        self.output_dir = data-file.parent / "scientific_report_v2026"
         self.output_dir.mkdir(exist_ok=True)
         # Estilo estrito para journals (Phys. Rev. Style)
         plt.rcParams.update({
@@ -125,8 +125,8 @@ class ScientificReport:
             ax.plot(t, corr_max, label='Causal Edge Signal (ZZ)', color=COLOR_CAUSAL, alpha=0.6)
 
         # Linhas de Hit
-        hit_z = run.attrs.get("hit_step_z", -1)
-        hit_zz = run.attrs.get("hit_step_zz", -1)
+        hit_z = run.attrs.get("first_hit_full", -1)
+        hit_zz = run.attrs.get("first_hit_half", -1)
 
         if hit_z > 0:
             ax.axvline(x=hit_z * dt, color=COLOR_MASS, ls='--', label='Physical Limit')
@@ -148,60 +148,176 @@ class ScientificReport:
 
     def generate_admissibility_table(self, summary_data):
         """
-        [NOVO] Gera a Tabela I: Resultados de admissibilidade inferencial (Dirac/Ocupação).
+        Gera a Tabela I: Resultados de admissibilidade inferencial (Dirac/Ocupação).
         Focada em validar se o tamanho da rede (N) suporta o critério L_min.
         """
         df = pd.DataFrame(summary_data)
         
-        # Mapeamento para as chaves de 2026
-        mapping = {
-            'n_qubits': 'N',
-            'detector_threshold': 'Threshold',
-            'first_hit_step': 'Hit'
-        }
-        
-        # CORREÇÃO: Atribua o resultado do rename de volta ao df
-        df = df.rename(columns={k: v for k, v in mapping.items() if k in df.columns})
+        # 1. Ordenação e Cálculos
+        df = df.sort_values(["n_qubits"])
+        df["L_safe"] = df["first_hit_full"] - 1
+        df["first_hit_full"] = df["first_hit_full"].apply(lambda x: "-" if x <= 0 else x)
+        df["Admissible"] = df["L_safe"].apply(lambda x: "PASS" if x >= 32 else ("NO HIT" if x <= 0 else "FAIL"))
+        df["L_safe"] = df["L_safe"].apply(lambda x: "-" if x <= 0 else x)
 
-        # Agora o sort_values encontrará 'Threshold' e 'N'
-        df = df.sort_values(["N"])
-        
-        # Cálculo de métricas do Preprint
-        df["L_safe"] = df["First Hit (Steps)"] - 1
-        df["Admissible"] = df["L_safe"].apply(lambda x: "PASS" if x >= 32 else "FAIL")
+        # 2. Arredondamento Global para o CLI e CSV
+        # Seleciona apenas colunas numéricas para não dar erro em colunas de texto
+        numeric_cols = df.select_dtypes(include=['float64', 'float32']).columns
+        df[numeric_cols] = df[numeric_cols].round(2)
 
-        # Renomear colunas para o padrão do LaTeX no PDF
-        df_latex = df.rename(columns={
-            "N": "Lattice ($N$)",
-            "Threshold": "Threshold ($\theta$)",
-            "Hit": "Hit ($n_{\text{hit}}$)",
-            "L_safe": "$L_{\text{safe}}$",
+        # Print para o CLI (Log) formatado
+        print("\n[LOG] Admissibility Data:")
+        print(df.to_string(index=False))
+
+        # 3. Preparação para o LaTeX
+        # Renomear colunas para o padrão do LaTeX
+        df_latex = df.drop(columns=['T_safe', 'max_steps_full', 'm', 'w', 'threshold', 'dt_half', 'dt_full']).rename(columns={
+            "n_qubits": "Lattice ($N$)",
+            "threshold": "Threshold ($\\theta$)",
+            "first_hit_full": "First Hit ($p_{\\text{hit}}$)",
+            "L_safe": "$L_{\\text{safe}}$",
             "Admissible": r"($L_{\text{safe}} \geq 32$)"
         })
 
-        # Exportação para CSV e LaTeX
+        # Selecionar apenas as colunas que devem aparecer na tabela final (opcional)
+        # df_latex = df_latex]
+
+        # 4. Correção da Legenda (Extraindo valores escalares com .iloc[0])
+        m_val = df['m'].iloc[0]
+        w_val = df['w'].iloc[0]
+        p_val = df["max_steps_full"].iloc[0]
+        dt_val = df['dt_full'].iloc[0]
+        theta_val = df['threshold'].iloc[0]
+
+        caption = (
+            r"Boundary detection and inferential admissibility. Use case is a 1D Dirac lattice simulation "
+            rf"($m = {m_val:.2f}, w = {w_val:.2f}, \Delta t = {dt_val:.2f}, \theta = {theta_val:.2f}, p_{{\max}} = {p_val}$)."
+            r"$L_{\text{safe}}$ represents the temporal support (steps) before causality loss. "
+            r"The failure of the $N = 4$ configuration to meet the $L_{\min} = 32$ criterion "
+            r"demonstrates the framework's capacity to preclude inference in undersized domains."
+        )
+
+        # 5. Exportação
         df_latex.to_csv(self.output_dir / "admissibility_table.csv", index=False)
         
-        caption = "Boundary detection and inferential admissibility results for the 1D Dirac lattice simulation."
         with open(self.output_dir / "admissibility_table.tex", "w") as f:
-            f.write(df_latex.to_latex(index=False, caption=caption, label="tab:results_summary", escape=False))
+            # float_format="%.2f" garante que o LaTeX não ignore o arredondamento
+            f.write(df_latex.to_latex(
+                index=False, 
+                caption=caption, 
+                label="tab:results_summary", 
+                escape=False,
+                column_format="ccccccc", # Ajuste conforme o número de colunas
+                float_format="%.3f"
+            ))
             
-        print("[INFO] Tabela I (Admissibilidade) gerada com sucesso.")
+        print(f"[INFO] Tabela I (Admissibilidade) gerada em: {self.output_dir}")
+
+    def plot_zitterbewegung_analysis(self, run, n_q, dt):
+        """
+        Visualiza a oscilação de Zitterbewegung extraída da ocupação média.
+        fh: first_hit_full (proveniente dos atributos do run)
+        """
+        occ = run["occ_full"][:]
+        steps, sites = occ.shape
+        t = np.arange(steps) * dt
+        
+        # Calcula a posição média <x> em cada passo de tempo
+        # x_mean = sum(site_index * occupancy) / sum(occupancy)
+        site_indices = np.arange(sites)
+        x_mean = np.sum(occ * site_indices, axis=1) / np.sum(occ, axis=1)
+        
+        fig, ax = plt.subplots(figsize=(6, 4))
+        ax.plot(t, x_mean, color='tab:blue', label=r'$\langle \hat{x} \rangle$ (Simulated)')
+        fh = run.attrs.get("first_hit_full", -1)
+
+        if fh > 0:
+            t_hit = fh * dt
+            # Destaca a zona segura e a zona corrompida por bordas
+            ax.axvspan(0, t_hit, color='tab:green', alpha=0.1, label='Causal Safe')
+            ax.axvspan(t_hit, t[-1], color='tab:red', alpha=0.05, label='Invalid (Boundary)')
+            ax.axvline(x=t_hit, color='tab:red', linestyle='--', alpha=0.7)
+
+        ax.set_title(f"zitterbewegung dynamics n={n_q}", fontsize=11)
+        ax.set_xlabel("time")
+        ax.set_ylabel("mean position <x>")
+        ax.legend(fontsize='x-small', loc='upper right')
+        
+        plt.tight_layout()
+        plt.savefig(self.output_dir / f"zitter_dynamics_n{n_q}.png", dpi=300)
+        plt.close()
+
+    def generate_causal_velocity_table(self, summary_data):
+        """
+        [NOVO] Tabela comparativa de velocidade de informação vs massa.
+        Extrai a 'Velocidade de Lieb-Robinson' medida pelo framework.
+        """
+        df = pd.DataFrame(summary_data)
+        
+        # Cálculo da velocidade operacional v = (distância até a borda) / t_hit
+        # Distância assumida como N/2 para pacotes centralizados
+        df["v_causal"] = (df["n_qubits"] / 2) / (df["first_hit_full"] * df["dt_full"])
+        
+        # Filtra e formata para LaTeX
+        df_v = df[["n_qubits", "v_causal"]].copy()
+        df_v = df_v[df_v["v_causal"] < np.inf] # Remove NO HIT
+        
+        latex_table = df_v.to_latex(
+            index=False,
+            caption="Measured Operational Causal Velocity ($v_{LR}$) across different lattice sizes.",
+            label="tab:causal_velocity",
+            formatters={"v_causal": "{:.3f}".format}
+        )
+        
+        with open(self.output_dir / "causal_velocity.tex", "w") as f:
+            f.write(latex_table)
+
 
     def generate_stability_table(self, summary_data):
         """
-        Gera a Tabela II: Análise de estabilidade causal (Lieb-Robinson).
-        Focada no tempo físico de segurança (T_safe).
+        Gera a Tabela II: Análise de estabilidade causal.
+        Focada em n_qubits e no tempo físico de segurança (T_safe).
         """
-        df = pd.DataFrame(summary_data).sort_values("N")
+        df = pd.DataFrame(summary_data).sort_values("n_qubits")
         df.to_csv(self.output_dir / "stability_table.csv", index=False)
-        
-        latex_table = df.to_latex(index=False, 
-                                  caption="Causal Stability and Safe Window Analysis",
-                                  label="tab:stability")
+
+        # 1. Extrair valores constantes para o caption antes de remover as colunas
+        # Assumindo que os valores são os mesmos em todas as linhas
+        m_val = df['m'].iloc[0]
+        w_val = df['w'].iloc[0]
+        dt_val = df['dt_full'].iloc[0]
+        thresh = df['threshold'].iloc[0]
+
+        # 2. Filtrar colunas: Mantemos apenas o que é relevante para a comparação
+        # Ajuste a lista abaixo se quiser manter 'max_steps_full' ou outras.
+        cols_to_keep = ["n_qubits", "first_hit_full", "T_safe"]
+        df_filtered = df[cols_to_keep].copy()
+
+        # 3. Formatação: 2 casas para o tempo, 0 para contagens/qubits
+        formatters = {
+            "T_safe": "{:.2f}".format,
+            "first_hit_full": "{:d}".format,
+            "n_qubits": "{:d}".format
+        }
+
+        # Gerar o caption dinâmico com os parâmetros fixos
+        caption_str = (f"Causal Stability Analysis ($m={m_val:.1f}, \\omega={w_val:.1f}, "
+                    f"\\Delta t={dt_val:.3f}, \\epsilon={thresh:.1f}$)")
+
+        latex_table = df_filtered.to_latex(
+            index=False,
+            caption=caption_str,
+            label="tab:stability",
+            formatters=formatters,
+            column_format="rrr", # Alinhamento à direita
+            escape=False        # Permite símbolos LaTeX no caption
+        )
+
         with open(self.output_dir / "stability_table.tex", "w") as f:
             f.write(latex_table)
+        
         print("[INFO] Tabela II (Estabilidade) gerada com sucesso.")
+
     
     def plot_edge_means(self, run, n_q, dt, fh):
         """Recria o gráfico 'edge means (aligned)' das páginas 3 e 14."""
@@ -332,16 +448,32 @@ class ScientificReport:
 
     def run(self):
         summary_stats = []
-        with h5py.File(self.data_file, "r") as f:
+        with h5py.File(self.data-file, "r") as f:
             runs = f["dirac_simulation/runs"]
+            def print_structure(name, obj):
+                # Recuo visual baseado na profundidade da estrutura
+                indent = '  ' * name.count('/')
+                print(f"{indent}{name} ({type(obj).__name__})")
+                
+                # Imprime os Atributos (Metadados)
+                for key, val in obj.attrs.items():
+                    print(f"{indent}    [Attr] {key}: {val}")
+            
+            runs.visititems(print_structure)
+
             for r_id in runs.keys():
                 r = runs[r_id]
                 attrs = r.attrs
 
                 summary_stats.append({
-                    "N": attrs["n_qubits"],  # Certifique-se de que a chave é exatamente "N"
-                    "dt": attrs["dt_full"],
-                    "First Hit (Steps)": attrs["first_hit_full"],
+                    "m": round(attrs["m"], 2),
+                    "w": round(attrs["w"], 2),
+                    "threshold": attrs["threshold"],
+                    "max_steps_full": attrs["max_steps_full"],
+                    "n_qubits": attrs["n_qubits"],  # Certifique-se de que a chave é exatamente "n_qubits"
+                    "dt_full": attrs["dt_full"],
+                    "first_hit_full": attrs["first_hit_full"],
+                    "dt_half": attrs["dt_half"],
                     "T_safe": attrs["first_hit_full"] * attrs["dt_full"] if attrs["first_hit_full"] > 0 else 0
                 })
 
@@ -357,14 +489,15 @@ class ScientificReport:
                     attrs["first_hit_full"], attrs["first_hit_half"]
                 )
                 self.plot_edge_means_comparison(r, attrs["n_qubits"], attrs["dt_full"])
-                
+                self.plot_zitterbewegung_analysis(r,n_q,dt)
                 print(f"Sucesso: Imagens de validação científica geradas para N={attrs['n_qubits']}")
 
         self.generate_stability_table(summary_stats)
         self.generate_admissibility_table(summary_stats)
+        self.generate_causal_velocity_table(summary_stats)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--data_file", type=Path, required=True)
+    parser.add_argument("--data-file", type=Path, required=True)
     args = parser.parse_args()
-    ScientificReport(args.data_file).run()
+    ScientificReport(args.data-file).run()
