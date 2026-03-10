@@ -25,11 +25,9 @@ def make_estimator(backend_cfg: Dict[str, Any]):
         from qiskit_aer import AerSimulator
         from qiskit_aer.primitives import EstimatorV2
         
-        # Specific configuration for efficiently simulating long 1D chains.
         precision = float(backend_cfg.get("precision", 0.0) or 0.0)
         backend_options: Dict[str, Any] = {"method": "matrix_product_state"}
         
-        # Truncation parameters to control error vs. performance
         if "matrix_product_state_max_bond_dimension" in backend_cfg:
             backend_options["matrix_product_state_max_bond_dimension"] = int(backend_cfg["matrix_product_state_max_bond_dimension"])
         if "matrix_product_state_truncation_threshold" in backend_cfg:
@@ -46,10 +44,7 @@ def estimate_evs(estimator, circuit: QuantumCircuit, observables: List[SparsePau
     """Performs the estimation of expected values ​​synchronously."""
     job = estimator.run([(circuit, observables)])
     result = job.result()
-    
-    # Robust extraction of data from PubResult (Qiskit Primitives V2)
-    datum = result[0]
-    data = getattr(datum, "data", None)
+    data = getattr(result[0], "data", None)
     evs = getattr(data, "evs", None) if data is not None else None
     if evs is None:
         raise RuntimeError("The Estimator result does not contain 'data.evs'.")

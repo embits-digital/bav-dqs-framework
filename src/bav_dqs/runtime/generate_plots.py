@@ -12,9 +12,9 @@ COLOR_BASELINE = 'tab:gray'
 COLOR_HIGHLIGHT = 'tab:orange'
 
 class ScientificReport:
-    def __init__(self, data-file: Path):
-        self.data-file = data-file
-        self.output_dir = data-file.parent / "scientific_report_v2026"
+    def __init__(self, data_file: Path):
+        self.data_file = data_file
+        self.output_dir = data_file.parent / "scientific_report_v2026"
         self.output_dir.mkdir(exist_ok=True)
         # Estilo estrito para journals (Phys. Rev. Style)
         plt.rcParams.update({
@@ -448,7 +448,7 @@ class ScientificReport:
 
     def run(self):
         summary_stats = []
-        with h5py.File(self.data-file, "r") as f:
+        with h5py.File(self.data_file, "r") as f:
             runs = f["dirac_simulation/runs"]
             def print_structure(name, obj):
                 # Recuo visual baseado na profundidade da estrutura
@@ -498,6 +498,6 @@ class ScientificReport:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--data-file", type=Path, required=True)
+    parser.add_argument("--data_file", type=Path, required=True)
     args = parser.parse_args()
-    ScientificReport(args.data-file).run()
+    ScientificReport(args.data_file).run()

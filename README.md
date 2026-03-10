@@ -69,7 +69,7 @@ python -m bav_dqs.runtime.run_dirac_simulation --config src/configs/dirac_simula
 To execute a Dirac wavepacket simulation using a configuration file:
 
 ```bash
-python -m bav_dqs.runtime.generate_plots --data-file=results/dirac_simulation_20260309_020940.h5
+python -m bav_dqs.runtime.generate_plots --data_file=results/dirac_simulation_20260309_020940.h5
 ```
 
 

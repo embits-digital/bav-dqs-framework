@@ -18,11 +18,13 @@ class DataManager:
         config: Optional[Dict[str, Any]] = None,
         schema_version: str = "1.0.0",
         experiment_id: str = "default_exp",
+        experiment_desc: str = "default_exp",
     ) -> None:
         self.file_path = Path(file_path)
         self.config = config or {}
         self.schema_version = schema_version
         self.experiment_id = experiment_id
+        self.experiment_desc = experiment_desc
         
         # Writer is maintained as internal property.
         self._writer: Optional[Writer] = None
@@ -34,12 +36,14 @@ class DataManager:
         
         # Retrieve YAML metadata or use defaults.
         exp_id = cfg_mngr.get("experiment.id")
+        exp_desc = cfg_mngr.get("experiment.description")
         schema = cfg_mngr.get("experiment.schema_version")
         
         return cls(
             file_path=h5_path,
             config=cfg_mngr._config,
             experiment_id=exp_id,
+            experiment_desc=exp_desc,
             schema_version=schema
         )
 
@@ -50,6 +54,7 @@ class DataManager:
                 "config": self.config,
                 "schema_version": self.schema_version,
                 "experiment_id": self.experiment_id,
+                "experiment_desc": self.experiment_desc,
             }
             
             self._writer = Writer(
@@ -91,7 +96,6 @@ class DataManager:
         """
         with self.session() as r:
             ds = r.get_dataset_lazy(group, dataset, run_id)
-            # Slicing [start:end] happens at the file level (optimized I/O)
             return ds[start:end] 
 
     def stream_run_data(self, group: str, run_id: str, dataset: str, chunk_size: int = 1000):

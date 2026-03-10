@@ -115,7 +115,7 @@ def main() -> None:
         config=str(args.config),
         schema_version=schema_version,
         experiment_id=exp_id,
-        description=exp_desc
+        experiment_desc=exp_desc
     )
 
     for width in widths:
@@ -201,10 +201,6 @@ def _run_and_save_width(n_qubits, m, w, dt_full, max_steps_full, detector_cfg, b
         datasets=datasets,
         attributes=attributes
     )
-
-
-    if logger is not None:
-        logger.info("Simulation pipeline complete. HDF5: %s", manager.file_path)
 
 def _apply_richardson_if_enabled(rich_cfg, detector_cfg, occ_full, occ_half_aligned, n_safe):
     """Encapsula a lógica de Richardson para limpar o fluxo principal."""

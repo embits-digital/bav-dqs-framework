@@ -18,14 +18,6 @@ from bav_dqs.core.operators.z_observable import build_z_observables
 from bav_dqs.utils.config_manager import ConfigManager
 from bav_dqs.utils.types.dirac_simulation import DiracSimulationModelCfg, DiracSimulationResult
 
-def build_initial_circuit(n_qubits: int) -> QuantumCircuit:
-    """Prepares the initial state: single excitation at the center of the 1D network."""
-    n = int(n_qubits)
-    if n < 2: raise ValueError("n_qubits >= 2")
-    qc = QuantumCircuit(n)
-    qc.x(n // 2) 
-    return qc
-
 def load_dirac_simulation_yaml(path: Path) -> Dict[str, Any]:
     ConfigManager.require_path(str(path))
     with open(path, "r", encoding="utf-8") as f:
