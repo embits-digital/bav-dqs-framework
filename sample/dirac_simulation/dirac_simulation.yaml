@@ -1,0 +1,50 @@
+experiment:
+  id: "dirac_simulation"
+  schema_version: "DiracSimulation_1_0_7_preprint"
+  description: "Deterministic lattice evolution, causal boundary instrumentation, Richardson pairing"
+
+physics:
+  m: 3.0
+  w: 0.5
+  dt: 0.001
+  max_steps: 5000
+
+
+lattice:
+  widths: [4, 6, 8, 12] 
+  threshold: 0.0005
+  auto_threshold: false
+  edge_window: 1
+  edge_persistence: 5
+
+validity:
+  p_min: 32
+  stricted: false # Se true, interrompe a simulação se n_safe < p_min
+
+  observation_mode: ["occupancy", "correlation"] # ["occupancy", "correlation"]
+  reference_qubit: "center"
+
+backend:
+  mode: "ideal"       
+  precision: 0.02
+  shots: 1024
+  optimization_level: 3
+  logging:
+    enabled: true
+    every_steps: 50
+
+richardson:
+  enabled: true
+  order_p: 2
+
+analysis:
+  outdir: "figures"
+  window_mode: "both"
+  min_fft_samples: 32
+  fft_remove_mean: true
+  fft_window: "blackman" # blackman or hann
+  figure_dpi: 300
+  heatmap_figsize: [7.5, 4.5]
+  trace_fft_figsize: [7.5, 6.0]
+  scaling_figsize: [7.0, 4.0]
+  save_json_summary: true

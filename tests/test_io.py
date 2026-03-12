@@ -1,6 +1,6 @@
 import pytest
 import numpy as np
-from bav_dqs.io.data_manager import DataManager
+from bav_dqs.utils.io.data_manager import DataManager
 
 # --- Fixtures ---
 
@@ -9,7 +9,7 @@ def mock_config():
     """Simulated configuration for HDF5 global metadata."""
     return {
         "physics": {"m": 0.5},
-        "experiment": {"id": "TEST_EXP_001", "schema_version": "1.0.0"}
+        "experiment": {"id": "TEST_EXPERIMENT", "schema_version": "1.0.7.preprint"}
     }
 
 @pytest.fixture
@@ -54,7 +54,7 @@ def test_full_io_cycle(tmp_path, mock_config, generic_sim_data):
     with dm.open_reader() as reader:
         # Global Metadata
         global_meta = reader.get_global_metadata()
-        assert global_meta["experiment_id"] == "TEST_EXP_001"
+        assert global_meta["experiment_id"] == "TEST_EXPERIMENT"
         assert global_meta["config"]["physics"]["m"] == pytest.approx(0.5)
         
         # Datasets (NumPy Arrays)

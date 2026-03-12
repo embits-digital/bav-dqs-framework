@@ -96,24 +96,26 @@ class BoundaryDetector:
         self._counters = {"left": 0, "right": 0}
         self.results = DetectionResult()
 
-def _update_hit_logic(res, dl, dr, thr, edge_persistence, step_idx):
-    """Simplified edge_persistence logic for left (0) and right (1)."""
-    for i, val in enumerate([dl, dr]):
-        if val >= thr:
-            res["counts"][i] += 1
-        else:
-            res["counts"][i] = 0
-            
-        if res["hits"][i] is None and res["counts"][i] >= edge_persistence:
-            res["hits"][i] = step_idx - edge_persistence
+    @staticmethod
+    def _update_hit_logic(res, dl, dr, thr, edge_persistence, step_idx):
+        """Simplified edge_persistence logic for left (0) and right (1)."""
+        for i, val in enumerate([dl, dr]):
+            if val >= thr:
+                res["counts"][i] += 1
+            else:
+                res["counts"][i] = 0
+                
+            if res["hits"][i] is None and res["counts"][i] >= edge_persistence:
+                res["hits"][i] = step_idx - edge_persistence
 
-def _get_d_hit_eff(side: Optional[str], d_l_eff: float, d_r_eff: float) -> Optional[float]:
-    """It calculates the actual distance traveled based on the detected side."""
-    if side is None:
-        return None
-    if side == "left":
-        return d_l_eff
-    if side == "right":
-        return d_r_eff
-    # If 'both', returns the shortest distance (closest impact).
-    return min(d_l_eff, d_r_eff)
+    @staticmethod
+    def _get_d_hit_eff(side: Optional[str], d_l_eff: float, d_r_eff: float) -> Optional[float]:
+        """It calculates the actual distance traveled based on the detected side."""
+        if side is None:
+            return None
+        if side == "left":
+            return d_l_eff
+        if side == "right":
+            return d_r_eff
+        # If 'both', returns the shortest distance (closest impact).
+        return min(d_l_eff, d_r_eff)

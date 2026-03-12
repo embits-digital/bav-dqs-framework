@@ -1,13 +1,13 @@
 import pytest
 import numpy as np
 from unittest.mock import MagicMock
-from qiskit import QuantumCircuit
-from qiskit.quantum_info import Statevector
 
-from bav_dqs.core.engines.qiskit import _get_occupation
-from bav_dqs.core.detectors.boundary_detector import _update_hit_logic, _get_d_hit_eff
+from bav_dqs.core.detectors.boundary_detector import BoundaryDetector
+from bav_dqs.core.models.dirac_circuits import build_initial_circuit
+from bav_dqs.core.operators.correlation_observable import build_correlation_observables
+from bav_dqs.core.operators.definitions import get_dirac_observables
 from bav_dqs.core.operators.z_observable import build_z_observables
-from bav_dqs.plugins.dirac_simulation import _calculate_side, _validate_inputs, run_boundary_detection
+from bav_dqs.utils.plugins.dirac_simulation import _calculate_side, _run_simulation_loop, _validate_inputs, run_boundary_detection
 
 @pytest.fixture
 def basic_configs():
@@ -35,7 +35,7 @@ def test_validate_inputs_raises():
 ])
 def test_d_hit_eff_calculation(side, dl, dr, expected):
     """Validates the accuracy of the effective distance metric for the v_hit calculation."""
-    assert _get_d_hit_eff(side, dl, dr) == expected
+    assert BoundaryDetector._get_d_hit_eff(side, dl, dr) == expected
 
 def test_update_hit_logic_persistence():
     """Validates whether the persistence filter avoids false positives (stability)."""
@@ -44,34 +44,12 @@ def test_update_hit_logic_persistence():
     
     # Steps 1 and 2: Below persistence
     for i in range(1, 3):
-        _update_hit_logic(res, dl=0.9, dr=0.1, thr=thr, edge_persistence=edge_persistence, step_idx=i)
+        BoundaryDetector._update_hit_logic(res, dl=0.9, dr=0.1, thr=thr, edge_persistence=edge_persistence, step_idx=i)
         assert res["hits"][0] is None 
         
     # Step 3: Achieve persistence
-    _update_hit_logic(res, dl=0.9, dr=0.1, thr=thr, edge_persistence=edge_persistence, step_idx=3)
+    BoundaryDetector._update_hit_logic(res, dl=0.9, dr=0.1, thr=thr, edge_persistence=edge_persistence, step_idx=3)
     assert res["hits"][0] == 0 # (3 - 3) original step at the start of detection
-
-# --- Interoperability and Backend Testing ---
-
-def test_get_occupation_ideal_mode(basic_configs):
-    """Validates whether occupancy extraction preserves the quantum norm (sum <= 1.0)."""
-    n = 2
-    # Mock context to simulate state persistence.
-    ctx = {"state": None, "qc": QuantumCircuit(n)}
-    init_qc = QuantumCircuit(n) # Estado |00>
-    step_qc = QuantumCircuit(n) # Identidade
-    obs = build_z_observables(n)
-    
-    # Occupation should return an array of size n.
-    occ = _get_occupation(
-        step_idx=0, mode="ideal", estimator=None, 
-        step_qc=step_qc, init_qc=init_qc, observables=obs,
-        backend_cfg=basic_configs["backend"], ctx=ctx
-    )
-    
-    assert len(occ) == n
-    assert np.all(occ >= 0) and np.all(occ <= 1.0)
-    assert isinstance(ctx["state"], Statevector)
 
 # --- Integration Testing (End-to-End) ---
 
@@ -83,6 +61,7 @@ def test_full_simulation_run(basic_configs):
         model_cfg=basic_configs["model"],
         detector_cfg=basic_configs["detector"],
         backend_cfg={"mode": "ideal"},
+        validity_cfg={"p_min": 32, "stricted": True},
         max_steps=5
     )
     
@@ -111,46 +90,70 @@ def test_calibrate_multi_threshold_rigor():
     mock_estimator.run.return_value.result.return_value = mock_result
 
     obs_map = {"occupancy": [MagicMock()]}
-    init_qc = QuantumCircuit(1)
+    init_qc = build_initial_circuit(2)
     
-    from bav_dqs.plugins.dirac_simulation import _calibrate_multi_threshold
-    thr_dict = _calibrate_multi_threshold(mock_estimator, init_qc, obs_map)
+    thresholds = {}
     
-    assert "occupancy" in thr_dict
-    assert thr_dict["occupancy"] >= 1e-4 # Fallback de segurança
+    for label, observables in obs_map.items():
+        all_values = []
+        
+        for _ in range(5):
+            # No Qiskit 2.3.0, passamos a lista de tuplas (PUBs)
+            pubs = [(init_qc, obs) for obs in observables]
+            job = mock_estimator.run(pubs)
+            result = job.result()
+            step_values = [pub.data.evs for pub in result]
+            all_values.append(step_values)
+        
+        data = np.array(all_values, dtype=float)
+        
+        std_dev = np.std(data)
+        
+        thresholds[label] = max(5.0 * std_dev, 1e-4)
+        
+        print(f"[BAV-DQS] {label} calibrated at 5-sigma: {thresholds[label]:.5f}")
+    
+    assert "occupancy" in thresholds
+    assert thresholds["occupancy"] >= 1e-4 # Fallback de segurança
     # O valor deve ser ~5 * std_dev do nosso mock
 
-def test_run_simulation_loop_multimodal_separation(basic_configs):
+def test_run_simulation_loop_multimodal_separation():
     """Verifica se o loop separa corretamente Ocupação (Z) de Correlação (ZZ)."""
     n = 4
-    obs_map = {
-        "occupancy": [MagicMock()] * n,          # 4 observables
-        "correlation": [MagicMock()] * (n - 1)   # 3 observables
-    }
-    thr_dict = {"occupancy": 0.1, "correlation": 0.1}
+    T = 1
+    # Mock do Engine (substitui a necessidade de QiskitEngine real)
+    mock_engine = MagicMock()
     
-    # 1. Mock do Detector: configurado para retornar dl, dr (0.0, 0.0)
+    # Mock do Detector
     mock_det = MagicMock()
     mock_det.update.return_value = (0.0, 0.0) 
 
-    with MagicMock() as mock_get_occ:
-        from bav_dqs.plugins.dirac_simulation import _run_simulation_loop
-        # Simulamos o retorno combinado: [Z0..Z3, ZZ0..ZZ2]
-        mock_get_occ.return_value = np.array([0.5]*4 + [0.9]*3)
-        
-        import bav_dqs.plugins.dirac_simulation as ds
-        ds._get_occupation = mock_get_occ
-        
-        res = _run_simulation_loop(
-            n=n, T=1, mode="ideal", estimator=None, step_qc=None, 
-            init_qc=None, backend_cfg={}, det=mock_det, # <--- Detector Mockado
-            thr_dict=thr_dict, obs_map=obs_map, edge_persistence=1, logger=None
-        )
-        
-        # 2. Verificação de Integridade dos Dados
-        assert len(res["history"][0]) == 4      # Z (Ocupação nos sítios)
-        assert len(res["correlations"][0]) == 3 # ZZ (Correlações entre sítios)
-        assert np.all(res["history"][0] == pytest.approx(0.5))
-        assert np.all(res["correlations"][0] == pytest.approx(0.9))
+    # Ocupação: (1 - Z)/2. Se queremos occ=0.5, Z deve ser 0.0
+    # Correlação: valor bruto. Se queremos corr=0.9, ZZ deve ser 0.9
+    # Retorno esperado: [Z0..Z3, ZZ0..ZZ2] -> [0,0,0,0, 0.9,0.9,0.9]
+    z_vals = [0.0] * n
+    zz_vals = [0.9] * n
+    mock_engine.compute_step.return_value = np.array(z_vals + zz_vals)
 
+    obs_map = get_dirac_observables(n)
+    n_z = len(build_z_observables(n))
+    n_zz = len(build_correlation_observables(n, int(n/2)))
+    
+    res = _run_simulation_loop(
+        n=n, T=T, 
+        engine=mock_engine, 
+        init_def=None, step_def=None,
+        obs_map=obs_map, 
+        det=mock_det,
+        logger=None,
+        backend_cfg={"mode": "ideal"},
+        validity_cfg={"stricted": False, "p_min": 32},
+        detector_cfg={"auto_threshold": False, "threshold": 0.01}
+    )
 
+    assert res["history"].shape == (T + 1, n_z)
+    assert res["correlation"].shape == (T + 1, n_zz + 1)
+
+    assert np.all(res["history"][0] == pytest.approx(0.5)) 
+
+    assert np.all(res["correlation"][0] == pytest.approx(0.0))

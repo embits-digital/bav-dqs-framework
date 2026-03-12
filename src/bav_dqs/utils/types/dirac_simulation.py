@@ -22,15 +22,15 @@ class DiracSimulationResult:
 
     Attributes:
         history: Matrix (T+1, N) with site occupancy <Z_j>.
-        correlations: Matrix (T+1, N-1) with ZZ correlations from center.
+        correlation: Matrix (T+1, N-1) with ZZ correlation from center.
         first_hit_step: First step where mass (occupancy) hit an edge.
         first_causal_hit_step: First step where information (correlation) hit an edge.
         detector_threshold: The calibrated 5-sigma floor for occupancy.
-        detector_threshold_corr: The calibrated 5-sigma floor for correlations.
+        detector_threshold_corr: The calibrated 5-sigma floor for correlation.
     """
     # --- Core Evolution Data ---
     history: np.ndarray
-    correlations: Optional[np.ndarray] = None  # Dados ZZ para Lieb-Robinson
+    correlation: Optional[np.ndarray] = None  # Dados ZZ para Lieb-Robinson
     
     # --- Mass Edge Metrics (Physical) ---
     first_hit_step: Optional[int] = None

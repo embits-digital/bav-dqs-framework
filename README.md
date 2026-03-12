@@ -4,8 +4,8 @@
 
 <a href="https://orcid.org/0000-0003-4605-1949" target="_blank"><img src="https://img.shields.io/badge/orcid-A6CE39?style=for-the-badge&logo=orcid&logoColor=white" /></a> &nbsp; &nbsp; 
 <a href="https://opensource.org/license/mit" target="_blank"><img src="https://img.shields.io/badge/MIT-red?style=for-the-badge" /></a> &nbsp; &nbsp; 
-<a href="https://doi.org/10.5281/zenodo.18918489" target="_blank"><img src="https://img.shields.io/badge/DOI-FAB70C?style=for-the-badge" /></a> &nbsp; &nbsp; 
-<a href="https://zenodo.org/records/18918490" target="_blank"><img src="https://img.shields.io/badge/ZENODO-blue?style=for-the-badge" /></a>
+<a href="https://doi.org/10.5281/zenodo.18974237" target="_blank"><img src="https://img.shields.io/badge/DOI-FAB70C?style=for-the-badge" /></a> &nbsp; &nbsp; 
+<a href="https://doi.org/10.5281/zenodo.18974237" target="_blank"><img src="https://img.shields.io/badge/ZENODO-blue?style=for-the-badge" /></a>
 
 This repository contains the official implementation of the **Boundary-Aware Validity (BAV)** framework. It provides a methodological layer to ensure inferential admissibility in finite-domain digital quantum simulations by identifying causality-safe temporal windows.
 
@@ -24,11 +24,11 @@ We introduce a boundary-aware validity framework that establishes an operational
 
 ## Repository Structure
 
-The project is structured as a modular Python package located in `src/bav_dqs`:
+The source code is available under MIT license at [https://github.com/embits-digital/bav-dqs-framework](https://github.com/embits-digital/bav-dqs-framework). The project is structured as a modular Python package located in `src/bav_dqs`:
 
 *   **`core/`**: Essential logic including `detectors` (boundary monitoring), `engines` (Qiskit integration), `models` (Dirac circuits), and `operators`.
-*   **`io/`**: Data management, supporting `.h5` format for high-fidelity simulation results.
-*   **`runtime/`**: Execution scripts for running simulations and generating visualizations.
+*   **`utils/io/`**: Data management, supporting `.h5` format for high-fidelity simulation results.
+*   **`utils/runtime/`**: Execution scripts for running simulations and generating visualizations.
 *   **`configs/`**: YAML-based configuration management for reproducible experiments.
 *   **`tests/`**: Comprehensive suite of unit tests for framework validation.
 
@@ -37,9 +37,15 @@ The project is structured as a modular Python package located in `src/bav_dqs`:
 The project uses `pyproject.toml` for dependency management. To install in editable mode:
 
 ```bash
-git clone https://github.com
+git clone https://github.com/embits-digital/bav-dqs-framework
 cd bav-dqs-framework
 pip install -e .
+```
+
+### TL;DR
+To generate report from sample data (similar to dirac simulations use case), just type:
+```bash
+python -m bav_dqs.utils.runtime.generate_plots --data_file=sample\dirac_simulation\dirac_simulation_20260312_175120.h5 --config=sample\dirac_simulation\dirac_simulation.yaml
 ```
 
 ### Development Setup
@@ -58,20 +64,50 @@ python -m pytest
 
 ## Usage
 
-### 1. Running a Simulation
+### 1. Running a Simulation: Dirac Simulation Use-Case
 To execute a Dirac wavepacket simulation using a configuration file:
 
 ```bash
-python -m bav_dqs.runtime.run_dirac_simulation --config src/configs/dirac_simulation.yaml --results-dir ./results
+python -m bav_dqs.utils.runtime.run_dirac_simulation --config src/configs/dirac_simulation.yaml --results-dir ./results
 ```
 
 ### 2. Generating Plot and Analysis
-To execute a Dirac wavepacket simulation using a configuration file:
+Use the generate_plots module to analyze existing results. Replace the --data_file path with your generated .h5 file
 
 ```bash
-python -m bav_dqs.runtime.generate_plots --data_file=results/dirac_simulation_20260309_020940.h5
+python -m bav_dqs.utils.runtime.generate_plots --data_file=results/dirac_simulation_20260309_020940.h5
 ```
 
+If you used a custom configuration file, you can specify the same settings to generate plots and tables based on the YAML file.
+
+```bash
+python -m bav_dqs.utils.runtime.generate_plots --data_file=test_results\dirac_simulation_20260310_201229.h5 --config src/configs/dirac_simulation.yaml
+```
+
+The simulation behavior is controlled via the `src/configs/dirac_simulation.yaml` file. Below are the key parameters for precision adjustment and validity control:
+
+#### Lattice and Threshold Parameters
+*   **`lattice.auto_threshold`**: Determines if the system calculates the threshold automatically.
+    *   `true`: Enables **warmup mode**, setting the threshold based on `p_min`.
+    *   `false`: Uses the static value defined in `lattice.threshold`.
+*   **`lattice.threshold`**: Sensitivity value for boundary detection.
+
+#### Validity Control
+*   **`validity.stricted`**: Defines the simulation's rigor regarding safety limits.
+    *   `true`: Immediately **interrupts** the current simulation if `n_safe < p_min` and proceeds to the next configuration.
+    *   `false`: Logs a violation warning but allows the execution to continue until completion.
+
+### Advanced Usage Examples
+
+To run simulations with different validation behaviors, point to your specific configuration files:
+
+```bash
+# Running with strict validation (halts on instability)
+python -m bav_dqs.utils.runtime.run_dirac_simulation --config src/configs/strict_validation.yaml
+
+# Running with automatic threshold (warmup mode enabled)
+python -m bav_dqs.utils.runtime.run_dirac_simulation --config src/configs/auto_threshold_setup.yaml
+```
 
 ## Citation
 If you use this framework or the associated data in your research, please cite:
@@ -79,8 +115,8 @@ If you use this framework or the associated data in your research, please cite:
 ### Paper:
 Cordeiro, E. M. (2026). Boundary-Aware Validity Framework for Digital Quantum Simulation.
 
-### Data/Software:
-E. Moura Cordeiro, “[Boundary-Aware Validity Framework for Digital Quantum Simulation](https://doi.org/10.5281/zenodo.18918489)”. Zenodo, Mar. 09, 2026. doi: 10.5281/zenodo.18918490.
+### Data and Software:
+E. Moura Cordeiro, “[Boundary-Aware Validity Framework for Digital Quantum Simulation](https://doi.org/10.5281/zenodo.18974237)”. Zenodo, Mar. 12, 2026. doi: 10.5281/zenodo.18974237.
 
 
 ## Contact

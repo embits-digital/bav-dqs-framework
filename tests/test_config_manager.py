@@ -1,7 +1,7 @@
 import pytest
 import yaml
 from pathlib import Path
-from bav_dqs.utils.config_manager import ConfigManager
+from bav_dqs.utils.helpers.config_manager import ConfigManager
 
 # --- Fixtures ---
 
