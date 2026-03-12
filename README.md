@@ -131,6 +131,6 @@ E. Moura Cordeiro, “[Boundary-Aware Validity Framework for Digital Quantum Sim
 ## Contact
 Elionai Moura Cordeiro
 
-<a href="https://embits/digital" target="_blank"><strong>EMBITS.DIGITAL</strong></a>, Brazil
+<a href="https://embits.digital" target="_blank"><strong>EMBITS.DIGITAL</strong></a>, Brazil
 
 Email: elionai@embits.digital
