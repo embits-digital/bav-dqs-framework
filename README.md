@@ -110,10 +110,19 @@ python -m bav_dqs.utils.runtime.run_dirac_simulation --config src/configs/auto_t
 ```
 
 ## Citation
+
 If you use this framework or the associated data in your research, please cite:
 
 ### Paper:
 Cordeiro, E. M. (2026). Boundary-Aware Validity Framework for Digital Quantum Simulation.
+
+#### How to help:
+If you are a registered endorser on ArXiv for nlin.CD (quantum.ph), you can support this submission via the link or code below:
+
+👉 Endorsement Link: https://arxiv.org/auth/endorse?x=49UWOT
+👉 Endorsement Code: 49UWOT
+
+If you are not an endorser but know someone in the field of Chaotic Dynamics or Quantum Simulation, I would greatly appreciate a tag or a share.
 
 ### Data and Software:
 E. Moura Cordeiro, “[Boundary-Aware Validity Framework for Digital Quantum Simulation](https://doi.org/10.5281/zenodo.18974237)”. Zenodo, Mar. 12, 2026. doi: 10.5281/zenodo.18974237.
