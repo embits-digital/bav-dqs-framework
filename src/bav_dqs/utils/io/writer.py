@@ -10,7 +10,7 @@ import yaml
 @dataclass(frozen=True)
 class Writer:
     file_path: Path
-    metadata: Dict[str, Any]  # Initialization metadata (schema, exp_id, etc.)
+    metadata: Dict[str, Any]
 
     def initialize_file(self) -> None:
         """Creates the file and writes global attributes if it doesn't exist."""
@@ -35,7 +35,6 @@ class Writer:
         Structure: /group_name/runs/run_id/datasets
         """
         with h5py.File(self.file_path, "a") as f:
-            # Navigation/Group Creation
             grp = f.require_group(group_name)
             runs_grp = grp.require_group("runs")
             
@@ -44,11 +43,9 @@ class Writer:
             
             run_grp = runs_grp.create_group(run_id)
 
-            # Attribute Recording (Run Metadata)
             for k, v in attributes.items():
                 run_grp.attrs[k] = self._serialize_attr(v)
 
-            # Dataset Recording (Numerical Data)
             for name, data in datasets.items():
                 run_grp.create_dataset(
                     name, 
@@ -60,15 +57,14 @@ class Writer:
     @staticmethod
     def _serialize_attr(v: Any) -> Any:
         """Converts complex data types to formats accepted by HDF5."""
-        # Se for um tipo básico que o HDF5 aceita nativamente, retorna ele
         if isinstance(v, (int, float, str, bool, np.int64, np.float64)):
             return v
-        # Se for None, vira string
+        
         if v is None: 
             return "none"
-        # Para QUALQUER outra coisa (dict, list, objetos customizados), força YAML string
+        
         try:
             return yaml.safe_dump(v, sort_keys=True)
         except Exception:
-            return str(v) # Fallback final para string simples
+            return str(v)
 

@@ -26,7 +26,6 @@ class DataManager:
         self.experiment_id = experiment_id
         self.experiment_desc = experiment_desc
         
-        # Writer is maintained as internal property.
         self._writer: Optional[Writer] = None
 
     @classmethod
@@ -34,7 +33,6 @@ class DataManager:
         """Instantiate the Manager by validating the YAML file through the ConfigManager."""
         cfg_mngr = ConfigManager.from_yaml(str(yaml_path))
         
-        # Retrieve YAML metadata or use defaults.
         exp_id = cfg_mngr.get("experiment.id")
         exp_desc = cfg_mngr.get("experiment.description")
         schema = cfg_mngr.get("experiment.schema_version")
@@ -49,7 +47,6 @@ class DataManager:
 
     def get_writer(self) -> Writer:
         if self._writer is None:
-            # Groups the global metadata into the dictionary expected by Writer.
             full_metadata = {
                 "config": self.config,
                 "schema_version": self.schema_version,
@@ -59,7 +56,7 @@ class DataManager:
             
             self._writer = Writer(
                 file_path=self.file_path,
-                metadata=full_metadata  # Now it coincides with the signing of the Writer.
+                metadata=full_metadata
             )
             self._writer.initialize_file()
         return self._writer
@@ -91,7 +88,7 @@ class DataManager:
 
     def fetch_run_slice(self, group: str, run_id: str, dataset: str, start: int, end: int):
         """
-        Example of Lazy Loading Real: Reads only a time interval from HDF5.
+        Lazy Loading: Reads only a time interval from HDF5.
         Prevents memory overflow in very long simulation datasets.
         """
         with self.session() as r:
@@ -109,14 +106,14 @@ class DataManager:
     @classmethod
     def from_h5_file(cls, h5_path: Path | str) -> DataManager:
         """
-        Instancia o DataManager a partir de um arquivo HDF5 existente,
-        tentando recuperar metadados básicos se disponíveis.
+        Instantiates the DataManager from an existing HDF5 file,
+        attempting to retrieve basic metadata if available.
         """
         path = Path(h5_path)
         with Reader(path) as reader:
             meta = reader.get_global_metadata()
         if not path.exists():
-            raise FileNotFoundError(f"Arquivo não encontrado em: {path}")
+            raise FileNotFoundError(f"File not found in: {path}")
 
         return cls(
             file_path=path,

@@ -138,7 +138,7 @@ def _run_and_save_width(n_qubits, m, w, dt_full, max_steps_full, detector_cfg, b
     )
 
     if res_full is None:
-        if logger: logger.error(f"Largura N={n_qubits} abortada por violação de isolamento causal (FULL).")
+        if logger: logger.error(f"Width N={n_qubits} aborted due to causal isolation violation (FULL).")
         return
     
     _log_sim_status(logger, res_full, dt_full, "FULL")
@@ -152,7 +152,7 @@ def _run_and_save_width(n_qubits, m, w, dt_full, max_steps_full, detector_cfg, b
     )
 
     if res_half is None:
-        if logger: logger.error(f"Largura N={n_qubits} abortada por violação de isolamento causal (HALF).")
+        if logger: logger.error(f"Width N={n_qubits} aborted due to causal isolation violation (HALF)..")
         return
     
     _log_sim_status(logger, res_half, dt_half, "HALF")
@@ -217,7 +217,7 @@ def _run_and_save_width(n_qubits, m, w, dt_full, max_steps_full, detector_cfg, b
     )
 
 def _apply_richardson_if_enabled(rich_cfg, detector_cfg, occ_full, occ_half_aligned, n_safe):
-    """Encapsula a lógica de Richardson para limpar o fluxo principal."""
+    """It encapsulates Richardson's logic to clean the main stream."""
     if not bool(rich_cfg.get("enabled", False)):
         return None, None, None
         
@@ -230,7 +230,7 @@ def _apply_richardson_if_enabled(rich_cfg, detector_cfg, occ_full, occ_half_alig
 def _log_sim_status(logger, res, dt, label):
     if not logger: return
     fh = res.first_hit_step if res.first_hit_step is not None else "None"
-    status = f"completed. First hit at step: {fh}" if res.first_hit_step is not None else "completed. No hits were detected."
+    status = f"completed. First hit at step: {fh}" if res.first_hit_step is not None else "completed. No hits detected."
     logger.info(f"Simulation {label} (dt={dt:.6g}) {status}")
 
 if __name__ == "__main__":

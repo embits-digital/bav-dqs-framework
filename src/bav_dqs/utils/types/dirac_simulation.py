@@ -41,7 +41,7 @@ class DiracSimulationResult:
     first_hit_side: Optional[str] = None
 
     # --- Causal Edge Metrics (Information/Lieb-Robinson) ---
-    first_causal_hit_step: Optional[int] = None # NOVIDADE 2026
+    first_causal_hit_step: Optional[int] = None
     
     # --- Temporal & Geometric Parameters ---
     dt: Optional[float] = None
@@ -59,7 +59,7 @@ class DiracSimulationResult:
     m: Optional[float] = None
     w: Optional[float] = None
     
-    # --- Admissibility Parameters (The "Shield") ---
+    # --- Admissibility Parameters ---
     detector_threshold: Optional[float] = None       # Theta_Z (5-sigma)
     detector_threshold_corr: Optional[float] = None  # Theta_ZZ (5-sigma)
     detector_edge_window: Optional[int] = None

@@ -39,14 +39,12 @@ class QiskitEngine(BaseEngine):
 
         raise ValueError(f"Modo de backend inválido: '{mode}'. Use 'ideal', 'aer' or 'mps'.")
 
-
     def compute_step(self, step_idx, n, init_qc, step_qc, obs_defs, ctx) -> np.ndarray:
         ops = []
         for s in obs_defs:
             pauli_str = s[0] if isinstance(s, (list, tuple)) else s
             label = pauli_str[0].paulis.to_labels()[0]
             ops.append(SparsePauliOp.from_list([(label, 1.0)]))
-
         
         if self.mode == "ideal":
             if step_idx == 0: ctx["state"] = Statevector.from_instruction(init_qc)

@@ -4,22 +4,22 @@ experiment:
   description: "Deterministic lattice evolution, causal boundary instrumentation, Richardson pairing"
 
 physics:
-  m: 3.0
+  m: 0.5
   w: 0.5
-  dt: 0.001
-  max_steps: 5000
+  dt: 0.02
+  max_steps: 400
 
 
 lattice:
-  widths: [4, 6, 8, 12] 
-  threshold: 0.0005
+  widths: [4, 6, 8, 12, 16, 20] 
+  threshold: 0.005
   auto_threshold: false
   edge_window: 1
   edge_persistence: 5
 
 validity:
   p_min: 32
-  stricted: false # Se true, interrompe a simulação se n_safe < p_min
+  stricted: false # If true, simulation stops when n_safe < p_min
 
   observation_mode: ["occupancy", "correlation"] # ["occupancy", "correlation"]
   reference_qubit: "center"

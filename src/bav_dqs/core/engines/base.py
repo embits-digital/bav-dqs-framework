@@ -4,11 +4,11 @@ from typing import Any, Dict, List
 import numpy as np
 
 class BaseEngine(ABC):
-    """Interface obrigatória para qualquer simulador (Qiskit, PennyLane, NumPy)."""
+    """Required interface for any simulator (Qiskit, PennyLane, NumPy)."""
 
     @abstractmethod
     def __init__(self, backend_cfg: Dict[str, Any]):
-        """Inicializa o backend e as opções de precisão/shots."""
+        """Initializes the backend and the accuracy/shot options."""
         pass
 
     @abstractmethod
@@ -22,13 +22,13 @@ class BaseEngine(ABC):
         ctx: Dict[str, Any]
     ) -> np.ndarray:
         """
-        Evolui o estado e calcula os valores esperados brutos <O>.
-        Retorna um array com os resultados de todos os observáveis.
+        Evolves the state and calculates the raw expected values ​​<O>.
+        Returns an array with the results of all observables.
         """
         pass
 
     @property
     @abstractmethod
     def metadata(self) -> Dict[str, Any]:
-        """Retorna metadados do backend (modo, precisão, etc)."""
+        """Returns backend metadata (mode, precision, etc.)."""
         pass

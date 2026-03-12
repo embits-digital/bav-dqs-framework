@@ -110,8 +110,8 @@ def _calculate_side(h_left, h_right) -> Optional[str]:
 
 def _build_result(n, dt, m, w, det: BoundaryDetector, d_cfg, mode, meta, res) -> DiracSimulationResult:
     """
-    Constrói o resultado final integrando Massa (Z) e Informação (ZZ).
-    Inclui os metadados de 5-sigma para blindagem científica.
+    It constructs the final result by integrating Mass (Z) and Information (ZZ).
+    Includes 5-sigma metadata for scientific shielding.
     """
     h_left, h_right = res["hits"]
     side = _calculate_side(h_left, h_right)
@@ -161,24 +161,19 @@ def run_boundary_detection(
     max_steps: int,
     logger=None,
 ) -> DiracSimulationResult:
-    """Orquestrador principal agnóstico a framework (BAV-DQS)."""
+    """Framework-agnostic principal orchestrator."""
     n, T = int(n_qubits), int(max_steps)
     _validate_inputs(n, T)
     
-    # 1. Setup de Física e Detecção
     m, w, dt = _get_model_params(model_cfg)
-    det, thr_yaml, edge_persistence = _setup_detector(detector_cfg, n)
+    det, _, _ = _setup_detector(detector_cfg, n)
     
-    # 2. Inicialização do Engine (Injeção de Dependência)
-    # No futuro, uma Factory pode escolher entre QiskitEngine, PennyLaneEngine, etc.
     engine: BaseEngine = QiskitEngine(backend_cfg)
     
-    # 3. Definição Abstrata de Circuitos (Gerados pelo Model)
     model_params = DiracSimulationModelCfg(m=m, w=w, dt=dt)
     init_def = build_initial_circuit(n)
     step_def = build_step_circuit(n, model_params)
     
-    # 4. Definição de Operadores (Strings de Pauli)
     obs_map = {}
     observation_modes = validity_cfg.get("observation_mode", ["occupancy"])
     ref_val = validity_cfg.get("reference_qubit", "center")
@@ -192,7 +187,6 @@ def run_boundary_detection(
     if "correlation" in observation_modes:
         obs_map["correlation"] = build_correlation_observables(n, reference_qubit=ref_idx)
 
-    # 5. Execução do Loop de Simulação
     history_data = _run_simulation_loop(
         n=n, T=T, engine=engine, 
         init_def=init_def, step_def=step_def,
@@ -241,7 +235,6 @@ def _run_simulation_loop(
     final_thr = thr_fixed
     flag = True
     for step_idx in range(T + 1):
-        # A. Engine e Física
         raw_evs = engine.compute_step(step_idx, n, init_def, step_def, all_ops, ctx)
         occ = (1.0 - raw_evs[:split_idx]) / 2.0
         corr = raw_evs[:split_idx]
@@ -254,7 +247,6 @@ def _run_simulation_loop(
         res["dL"].append(dl)
         res["dR"].append(dr)
     
-
         if step_idx < warmup_steps:
             calibration_buffer.append(max_signal)
 
@@ -269,11 +261,6 @@ def _run_simulation_loop(
 
         if step_idx >= warmup_steps:
             det._update_hit_logic(res, dl, dr, final_thr, edge_persistence, step_idx)
-
-        # C. Registro de dados
-       
-        
-        # D. Lógica de Early Exit (Validação de Fronteira)
         if det.results.first_hit_step is not None:
             status = _handle_collision(det.results.first_hit_step, p_min, stricted, flag, logger)
             flag = False
@@ -283,17 +270,16 @@ def _run_simulation_loop(
         if logger and log_every > 0 and (step_idx % log_every == 0 or step_idx == T):
             logger.info(f"Step {step_idx}/{T} | dL={dl:.4f} dR={dr:.4f}")
 
-    # E. Finalização
     final_res = _finalize_results(res, det)
     return final_res
 
 def _handle_collision(hit_step: int, p_min: int, stricted: bool, flag: bool, logger: Any) -> str:
-    """Centraliza a lógica de decisão sobre colisões detectadas."""
+    """It centralizes the decision logic regarding detected collisions."""
     if (int(hit_step) < int(p_min)) and flag:
         if logger:
-            logger.warning(f"early colision at t={hit_step} (p_min={p_min}).")
+            logger.warning(f"Early colision: step={hit_step}, p_min={p_min}.")
         if stricted:
-            if logger: logger.error("[STRICT] Abort:insuficient data.")
+            if logger: logger.error("[STRICT] Abort: insuficient data.")
             return "ABORT"
         return "CONTINUE"
 
