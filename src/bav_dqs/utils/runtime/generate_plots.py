@@ -151,6 +151,7 @@ class ScientificReport:
             first_hit = min(h for h in [hit_z, hit_zz] if h > 0)
             p_safe_msg = f"$p_{{safe}}$={first_hit}"
             is_admissible = useful_window >= t_min
+            ax.axvspan(0, first_hit * dt, color=COLOR_CAUSALITY, alpha=0.1, label='Causal Safe')
             ax.axvspan(first_hit * dt, t[-1], color=COLOR_CAUSAL, alpha=0.1, label=f'Invalid Domain ({reason})')
 
         status_str = "PASS" if is_admissible else "FAIL (window too small)"
