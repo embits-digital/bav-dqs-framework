@@ -19,12 +19,14 @@ class DataManager:
         schema_version: str = "1.0.7.preprint",
         experiment_id: str = "default_exp",
         experiment_desc: str = "default_exp",
+        extra_metadata: Optional[Dict[str, Any]] = None,
     ) -> None:
         self.file_path = Path(file_path)
         self.config = config or {}
         self.schema_version = schema_version
         self.experiment_id = experiment_id
         self.experiment_desc = experiment_desc
+        self.extra_metadata = dict(extra_metadata or {})
         
         self._writer: Optional[Writer] = None
 
@@ -52,6 +54,7 @@ class DataManager:
                 "schema_version": self.schema_version,
                 "experiment_id": self.experiment_id,
                 "experiment_desc": self.experiment_desc,
+                **self.extra_metadata,
             }
             
             self._writer = Writer(

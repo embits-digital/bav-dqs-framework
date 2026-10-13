@@ -1,0 +1,37 @@
+cff-version: 1.2.0
+message: "If you use this software or the associated data, please cite it using the metadata below."
+title: "Boundary-Aware Validity Framework for Digital Quantum Simulation"
+type: software
+authors:
+  - family-names: "Cordeiro"
+    given-names: "Elionai Moura"
+    orcid: "https://orcid.org/0000-0003-4605-1949"
+    email: "elionai@embits.digital"
+    affiliation: "EMBITS.DIGITAL"
+# NOTE: update version, doi and date-released when a new release/deposit is published
+# (the re-run of the experiments with versioned configs should be a new Zenodo version).
+version: "1.0.7.preprint"
+doi: "10.5281/zenodo.18974237"
+date-released: "2026-03-12"
+license: MIT
+repository-code: "https://github.com/embits-digital/bav-dqs-framework"
+url: "https://github.com/embits-digital/bav-dqs-framework"
+keywords:
+  - quantum-simulation
+  - boundary-aware-validity
+  - causal-isolation
+  - lattice-field-theory
+  - spectral-inference
+  - inferential-admissibility
+  - zitterbewegung
+  - quantum-computing
+preferred-citation:
+  type: article
+  authors:
+    - family-names: "Cordeiro"
+      given-names: "Elionai Moura"
+      orcid: "https://orcid.org/0000-0003-4605-1949"
+  title: "Boundary-Aware Validity Framework for Digital Quantum Simulation"
+  journal: "Research Square (preprint)"
+  year: 2026
+  doi: "10.21203/rs.3.rs-9129952/v1"

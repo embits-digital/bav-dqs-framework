@@ -2,6 +2,7 @@ from __future__ import annotations
 from qiskit import QuantumCircuit
 from qiskit.circuit.library import RXXGate, RYYGate, RZGate
 
+from bav_dqs.core.models.dirac_geometry import source_index
 from bav_dqs.utils.types.dirac_simulation import DiracSimulationModelCfg
 
 def build_initial_circuit(n_qubits: int) -> QuantumCircuit:
@@ -9,7 +10,7 @@ def build_initial_circuit(n_qubits: int) -> QuantumCircuit:
     n = int(n_qubits)
     if n < 2: raise ValueError("n_qubits >= 2")
     qc = QuantumCircuit(n)
-    qc.x(n // 2) 
+    qc.x(source_index(n))
     return qc
 
 def build_step_circuit(n_qubits: int, cfg: DiracSimulationModelCfg) -> QuantumCircuit:

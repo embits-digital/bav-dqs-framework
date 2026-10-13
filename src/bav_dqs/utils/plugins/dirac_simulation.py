@@ -9,10 +9,8 @@ from bav_dqs.core.detectors.boundary_detector import (
     BoundaryDetectorCfg
 )
 from bav_dqs.core.engines.base import BaseEngine
-from bav_dqs.core.engines.qiskit_engine import QiskitEngine
-from bav_dqs.core.models.dirac_circuits import build_initial_circuit, build_step_circuit
-from bav_dqs.core.operators.correlation_observable import build_correlation_observables
-from bav_dqs.core.operators.z_observable import build_z_observables
+from bav_dqs.core.connectors import get_connector, get_model_builder
+from bav_dqs.core.models.dirac_geometry import excluded_sites, source_index
 from bav_dqs.utils.helpers.config_manager import ConfigManager
 from bav_dqs.utils.types.dirac_simulation import DiracSimulationModelCfg, DiracSimulationResult
 
@@ -33,7 +31,7 @@ def parse_validity_cfg(cfg: Dict[str, Any]) -> Dict[str, Any]:
         "p_min": int(validity.get("p_min", 32)),
         "stricted": bool(validity.get("stricted", False)),
         "reference_qubit": validity.get("reference_qubit", "center"),
-        "observation_mode": validity.get("observation_mode", ["occupation", "correlation"])
+        "observation_mode": validity.get("observation_mode", ["occupancy", "correlation"])
     }
 
 def parse_analysis_cfg(cfg: Dict[str, Any]) -> Dict[str, Any]:
@@ -54,6 +52,8 @@ def parse_backend_cfg(cfg: Dict[str, Any]) -> Dict[str, Any]:
     mode = str(ConfigManager.require_path_key(cfg, "backend.mode")).strip().lower()
 
     out: Dict[str, Any] = {"mode": mode}
+    # Quantum framework behind the engine (connector registry); the methodology does not depend on it.
+    out["framework"] = str(backend.get("framework", "qiskit")).strip().lower()
 
     if mode == "aer":
         out["precision"] = float(ConfigManager.require_path_key(cfg, "backend.precision"))
@@ -92,13 +92,27 @@ def parse_model_cfg(cfg: Dict[str, Any]) -> Tuple[float, float, float, int]:
     return m, w, dt, max_steps
 
 def parse_richardson_cfg(cfg: Dict[str, Any]) -> Dict[str, Any]:
+    """Single point where ``richardson.order_p`` is read and validated.
+
+    When Richardson is enabled, ``order_p`` is mandatory (no silent default: the config must
+    document the choice) and must be an integer >= 1. Values such as 1.5 are rejected instead of
+    being truncated by ``int()``. Every consumer (consistency warning, extrapolation, HDF5
+    attributes) must use the value returned here, never re-read the raw config with a default.
+    Whether ``order_p`` matches the integrator order is NOT decided here (a mismatch is allowed,
+    e.g. to reproduce the v1 runs, and is reported by the runner).
+    """
     r = cfg.get("richardson", None)
     if not isinstance(r, dict):
         return {"enabled": False}
     enabled = bool(r.get("enabled", False))
     if not enabled:
         return {"enabled": False}
-    order_p = int(ConfigManager.require_path_key(cfg, "richardson.order_p"))
+    raw = ConfigManager.require_path_key(cfg, "richardson.order_p")
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)) or float(raw) != int(raw):
+        raise ValueError(f"richardson.order_p must be an integer >= 1, got {raw!r}")
+    order_p = int(raw)
+    if order_p < 1:
+        raise ValueError(f"richardson.order_p must be an integer >= 1, got {order_p}")
     return {"enabled": True, "order_p": order_p}
 
 def _calculate_side(h_left, h_right) -> Optional[str]:
@@ -117,9 +131,11 @@ def _build_result(n, dt, m, w, det: BoundaryDetector, d_cfg, mode, meta, res) ->
     side = _calculate_side(h_left, h_right)
 
     # Geometria Efetiva da Rede
-    src = n // 2
-    x_l = (d_cfg["edge_window"] - 1) / 2.0
-    x_r = (n - 1) - (d_cfg["edge_window"] - 1) / 2.0
+    # Max-based marker: the front is detected when it reaches the INNERMOST site of the
+    # window (index W-1 on the left, N-W on the right). For W=1 this is the edge site itself.
+    src = source_index(n)
+    x_l = float(d_cfg["edge_window"] - 1)
+    x_r = float(n - d_cfg["edge_window"])
     d_l_eff, d_r_eff = src - x_l, x_r - src
     
     # Cálculo de t_hit (Físico/Massa)
@@ -164,28 +180,36 @@ def run_boundary_detection(
     """Framework-agnostic principal orchestrator."""
     n, T = int(n_qubits), int(max_steps)
     _validate_inputs(n, T)
+    # The use case declares which sites an edge window must not contain (here: the source site);
+    # otherwise the marker would measure the evolution of the excitation, not the arrival at the edge.
+    BoundaryDetector.validate_edge_windows(
+        n, int(ConfigManager.require_key(detector_cfg, "edge_window")), excluded_sites(n)
+    )
     
     m, w, dt = _get_model_params(model_cfg)
     det, _, _ = _setup_detector(detector_cfg, n)
     
-    engine: BaseEngine = QiskitEngine(backend_cfg)
+    # Framework resolved through the connector registry (lazy import: only the chosen one is loaded).
+    framework = str(backend_cfg.get("framework", "qiskit")).strip().lower()
+    connector = get_connector(framework)
+    engine: BaseEngine = connector.create_engine(backend_cfg)
     
     model_params = DiracSimulationModelCfg(m=m, w=w, dt=dt)
-    init_def = build_initial_circuit(n)
-    step_def = build_step_circuit(n, model_params)
+    init_def, step_def = get_model_builder("dirac", framework)(n, model_params)
     
     obs_map = {}
-    observation_modes = validity_cfg.get("observation_mode", ["occupancy"])
+    observation_modes = {"occupancy" if str(x).lower() == "occupation" else str(x).lower()
+                         for x in validity_cfg.get("observation_mode", ["occupancy"])}
     ref_val = validity_cfg.get("reference_qubit", "center")
     if ref_val == "center":
-        ref_idx = n_qubits // 2
+        ref_idx = source_index(n)
     else:
         ref_idx = int(ref_val)
     
     if "occupancy" in observation_modes:
-        obs_map["occupancy"] = build_z_observables(n)
+        obs_map["occupancy"] = connector.build_occupancy_observables(n)
     if "correlation" in observation_modes:
-        obs_map["correlation"] = build_correlation_observables(n, reference_qubit=ref_idx)
+        obs_map["correlation"] = connector.build_correlation_observables(n, ref_idx)
 
     history_data = _run_simulation_loop(
         n=n, T=T, engine=engine, 
@@ -237,7 +261,7 @@ def _run_simulation_loop(
     for step_idx in range(T + 1):
         raw_evs = engine.compute_step(step_idx, n, init_def, step_def, all_ops, ctx)
         occ = (1.0 - raw_evs[:split_idx]) / 2.0
-        corr = raw_evs[:split_idx]
+        corr = raw_evs[split_idx:]  # ZZ channel (was raw_evs[:split_idx], i.e. a copy of the Z values)
         dl, dr = det.update(occ, step=step_idx)
         max_signal = max(dl, dr)
 
@@ -258,9 +282,11 @@ def _run_simulation_loop(
                 final_thr = thr_fixed
             if logger: 
                 logger.info(f"Auto-Threshold Calibrated: {final_thr} (5-sigma) at step {step_idx}")
+            # The detector is the single source of truth for hits: apply the calibrated theta to it.
+            # (Previously a parallel hit tracker used final_thr but was overwritten in
+            # _finalize_results, so auto_threshold had no effect on the reported hits.)
+            det.update_threshold(final_thr)
 
-        if step_idx >= warmup_steps:
-            det._update_hit_logic(res, dl, dr, final_thr, edge_persistence, step_idx)
         if det.results.first_hit_step is not None:
             status = _handle_collision(det.results.first_hit_step, p_min, stricted, flag, logger)
             flag = False

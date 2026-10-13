@@ -33,8 +33,9 @@ def test_baseline_initialization(detector: BoundaryDetector):
     
     assert d_left ==pytest.approx(0.0)
     assert d_right ==pytest.approx(0.0)
-    assert detector._baselines["left"] == pytest.approx(0.1)
-    assert detector._baselines["right"] == pytest.approx(0.1)
+    # Baselines are per-site profiles (size = edge_window), not scalars.
+    np.testing.assert_allclose(detector._baselines["left"], [0.1, 0.1])
+    np.testing.assert_allclose(detector._baselines["right"], [0.1, 0.1])
 
     assert detector.results.first_hit_step is None
     assert detector.results.first_side is None
@@ -137,6 +138,53 @@ def test_edge_window_sensitivity_max(base_cfg):
     
     detector.update(spike, step=1)
     assert detector._counters["left"] == 1
+
+def test_max_of_deviations_with_nonzero_baseline():
+    """Marker is max_i |n_i(t) - n_i(0)|, NOT |max_i n_i(t) - max_i n_i(0)|.
+
+    Baseline [0.8, 0.0]; later [0.8, 0.6]: the max of the window is unchanged (0.8),
+    so a deviation-of-max marker would stay at 0 and miss the front, while the
+    max-of-deviations marker sees 0.6.
+    """
+    cfg = BoundaryDetectorCfg(threshold=0.5, edge_window=2, edge_persistence=1)
+    det = BoundaryDetector(cfg, vector_size=10)
+    base = np.zeros(10)
+    base[0] = 0.8
+    det.update(base, step=0)
+    later = base.copy()
+    later[1] = 0.6
+    d_left, _ = det.update(later, step=1)
+    assert d_left == pytest.approx(0.6)
+    assert det._counters["left"] == 1
+
+
+def test_decay_below_baseline_is_also_a_deviation():
+    """Absolute deviation: a drop relative to t=0 counts as a deviation as well."""
+    cfg = BoundaryDetectorCfg(threshold=0.5, edge_window=1, edge_persistence=1)
+    det = BoundaryDetector(cfg, vector_size=6)
+    start = np.zeros(6)
+    start[0] = 0.9
+    det.update(start, step=0)
+    d_left, _ = det.update(np.zeros(6), step=1)
+    assert d_left == pytest.approx(0.9)
+
+
+@pytest.mark.parametrize("n, excluded, expected", [
+    (4, (2,), 1), (6, (3,), 2), (8, (4,), 3), (20, (10,), 9),   # single excluded site
+    (10, (3, 6), 3),                                              # excluded support spans several sites
+    (10, (), 10),                                                 # nothing to exclude
+])
+def test_max_valid_edge_window(n, excluded, expected):
+    assert BoundaryDetector.max_valid_edge_window(n, excluded) == expected
+
+
+def test_validate_edge_windows_rejects_excluded_sites():
+    BoundaryDetector.validate_edge_windows(8, 3, excluded_sites=(4,))  # ok
+    with pytest.raises(ValueError, match="contain excluded site"):
+        BoundaryDetector.validate_edge_windows(4, 3, excluded_sites=(2,))
+    with pytest.raises(ValueError, match="contain excluded site"):
+        BoundaryDetector.validate_edge_windows(6, 3, excluded_sites=(3,))
+
 
 def test_detector_reset_integrity(detector: BoundaryDetector):
     """Garante que o reset limpa todos os estados internos para uma nova run."""

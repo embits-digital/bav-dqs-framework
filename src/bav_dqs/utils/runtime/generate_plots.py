@@ -8,6 +8,7 @@ import argparse
 
 from bav_dqs.utils.io.data_manager import DataManager
 from bav_dqs.utils.plugins.dirac_simulation import load_dirac_simulation_yaml, parse_analysis_cfg, parse_detector_cfg, parse_validity_cfg
+from bav_dqs.utils.helpers.resolution import safe_window
 
 COLOR_MASS = '#1f77b4'
 COLOR_CAUSAL = '#d62728'
@@ -18,13 +19,19 @@ COLOR_CAUSALITY = '#17becf'
 class ScientificReport:
     def __init__(self, data_file: Path):
         self.data_file = data_file
-        self.output_dir = data_file.parent / f"report_{self.data_file.name.removesuffix(".h5")}".lower()
+        self.output_dir = data_file.parent / f"report_{self.data_file.name.removesuffix('.h5')}".lower()
         self.output_dir.mkdir(exist_ok=True)
         
         plt.rcParams.update({
             'font.size': 10, 'axes.grid': True, 'grid.alpha': 0.2,
             'lines.linewidth': 1.2, 'figure.dpi': 300
         })
+
+    @staticmethod
+    def _edge_window(run, default: int = 2) -> int:
+        """Edge window W used by the detector for this run (stored as an attribute).
+        Legacy files written before provenance capture fall back to 2."""
+        return int(run.attrs.get("edge_window", default))
 
     def plot_lieb_robinson_cone(self, run, n_q):
         """
@@ -46,7 +53,7 @@ class ScientificReport:
         im2 = ax2.imshow(corr_data, aspect='auto', origin='lower', cmap='YlOrRd')
         ax2.set_title(f"Information Spread (ZZ) N={n_q}", color=COLOR_CAUSAL)
         ax2.set_xlabel("Bond Index (ref=center)")
-        plt.colorbar(im2, ax=ax2, label=r'$| \langle Z_{ref} Z_j \rangle_c |$')
+        plt.colorbar(im2, ax=ax2, label=r'$| \langle Z_{ref} Z_j \rangle |$')
 
         plt.tight_layout()
         plt.savefig(self.output_dir / f"causal_cone_comparison_n{n_q}.png")
@@ -86,16 +93,27 @@ class ScientificReport:
         if "occ_rich" not in run:
             return
 
+        W = self._edge_window(run)
+        # None for legacy files that did not record p (never assume a default order).
+        p = int(run.attrs["richardson_order_p"]) if "richardson_order_p" in run.attrs else None
         t = np.arange(run["occ_full"].shape[0]) * dt
-        edge_full = np.abs(np.mean(run["occ_full"][:, :2], axis=1))
-        edge_rich = np.abs(np.mean(run["occ_rich"][:, :2], axis=1))
+        edge_full = np.abs(np.mean(run["occ_full"][:, :W], axis=1))   # base grid, step Δt
+        # refined grid (step Δt/2) sampled at the even steps, i.e. on the base time grid
+        edge_half = np.abs(np.mean(run["occ_half"][:][0::2][:, :W], axis=1)) if "occ_half" in run else None
+        edge_rich = np.abs(np.mean(run["occ_rich"][:, :W], axis=1))   # Richardson combination of Δt and Δt/2
 
         _, ax = plt.subplots(figsize=(6, 4))
-        ax.semilogy(t, edge_full, label=r'Error $O(\Delta t)$', color=COLOR_BASELINE, alpha=0.6)
-        ax.semilogy(t[:len(edge_rich)], edge_rich, label=r'Error $O(\Delta t^2)$', color=COLOR_CAUSAL, lw=1.5)
+        ax.semilogy(t, edge_full, label=r'base grid ($\Delta t$)', color=COLOR_BASELINE, alpha=0.6)
+        if edge_half is not None:
+            ax.semilogy(t[:len(edge_half)], edge_half, label=r'refined grid ($\Delta t/2$, twice the steps)', color=COLOR_MASS, ls='--', alpha=0.8)
+        ax.semilogy(t[:len(edge_rich)], edge_rich, label=r'Richardson($\Delta t$, $\Delta t/2$)', color=COLOR_CAUSAL, lw=1.5)
         
-        ax.set_title(rf"Numerical Error Suppression (N={n_q})")
-        ax.set_ylabel("Absolute Deviation (log)")
+        # NOTE: these curves are edge occupations (mean over the W left-edge sites), NOT numerical errors.
+        # The error against an exact reference is produced by ``verify_trotter_order``.
+        # Richardson uses the two resolutions Δt and Δt/2; p is the global error order of the integrator.
+        p_txt = f", p={p}" if (p is not None and p > 0) else ", p not recorded"
+        ax.set_title(rf"Edge signal at $\Delta t$, $\Delta t/2$ and Richardson (N={n_q}, W={W}{p_txt})", fontsize=10)
+        ax.set_ylabel("Edge occupation (log)")
         ax.set_xlabel("Physical Time")
         ax.legend(fontsize='small')
         plt.tight_layout()
@@ -113,25 +131,30 @@ class ScientificReport:
         if ref_ds not in run:
             ref_ds = list(run.keys())[0]
         t = np.arange(run[ref_ds].shape[0]) * dt
-        dl = run["metric_full_right"][:]
-        
-        corr_max = np.max(np.abs(run["correlation"][:]), axis=1) if "correlation" in run else None
+        # Boundary marker at both resolutions; the gate fires on whichever edge hits first.
+        dt_h = float(run.attrs.get("dt_half", dt / 2.0))
+        dl = (np.maximum(run["metric_full_left"][:], run["metric_full_right"][:])
+              if "metric_full_left" in run else run["metric_full_right"][:])
+        if "metric_half_left" in run and "metric_half_right" in run:
+            dl_h = np.maximum(run["metric_half_left"][:], run["metric_half_right"][:])
+            t_h = np.arange(dl_h.shape[0]) * dt_h
+        else:
+            dl_h, t_h = None, None
 
         _, ax = plt.subplots(figsize=(8, 4))
-        ax.plot(t, dl, label='Physical Edge Signal (Z)', color=COLOR_MASS)
-        if corr_max is not None:
-            ax.plot(t, corr_max, label='Causal Edge Signal (ZZ)', color=COLOR_CAUSALITY, alpha=0.6)
+        ax.plot(t, dl, label=r'edge marker $\Delta$ at $\Delta t$', color=COLOR_MASS)
+        if dl_h is not None:
+            ax.plot(t_h, dl_h, label=r'edge marker $\Delta$ at $\Delta t/2$', color=COLOR_BASELINE, ls=':', alpha=0.8)
 
-        hit_z = run.attrs.get("first_hit_full", -1)
-        hit_zz = run.attrs.get("first_hit_half", -1)
-        t_physical = hit_z * dt
-        t_causal = hit_zz * (dt / 2)
-        v_eff=0
-        if t_causal > 0:
-            v_eff = (n_q / 2) / t_causal
+        # Hits on the two resolutions are compared in PHYSICAL TIME (see utils/helpers/resolution.py).
+        hit_z = int(run.attrs.get("first_hit_full", -1))   # hit index on the base grid (step Δt)
+        hit_h = int(run.attrs.get("first_hit_half", -1))   # hit index on the refined grid (step Δt/2)
+        sw = safe_window(hit_z, hit_h, dt)
 
-        if hit_zz > 0:
-            ax.axvline(x=t_causal, color=COLOR_CAUSAL, ls=':', label=f'Causal Limit (v={v_eff:.2f})')
+        if sw.t_full is not None:
+            ax.axvline(x=sw.t_full, color=COLOR_CAUSAL, ls='--', label=r'hit at $\Delta t$')
+        if sw.t_half is not None:
+            ax.axvline(x=sw.t_half, color=COLOR_HIGHLIGHT, ls=':', label=r'hit at $\Delta t/2$')
 
         if auto_thr:
             ax.axvspan(0, t_warmup, color=COLOR_HIGHLIGHT, alpha=0.15, label='Calibration (Warmup)')
@@ -139,20 +162,20 @@ class ScientificReport:
         ax.set_xlabel("Time")
         ax.set_ylabel(r"Signal Deviation ($\Delta$)")
         
-        hits = [h for h in [hit_z, hit_zz] if h > 0]
+        hits = sw.t_safe is not None
         p_safe_msg = "No HITS"
         is_admissible = True
-        reason = "physical loss" if hit_z <= hit_zz and hit_z > 0 else "causal loss"
-        if not hits: reason = ""
+        reason = ""
+        if hits:
+            reason = {"dt": r"$\Delta t$", "dt/2": r"$\Delta t/2$", "both": r"$\Delta t$ and $\Delta t/2$"}[sw.limiting]
         t_min = validity_cfg['p_min'] * dt
-        valid_until = min([t for t in [t_physical, t_causal] if t > 0], default=t[-1])
+        valid_until = sw.t_safe if hits else t[-1]
         useful_window = (valid_until - t_warmup) if auto_thr else valid_until
         if hits:
-            first_hit = min(h for h in [hit_z, hit_zz] if h > 0)
-            p_safe_msg = f"$p_{{safe}}$={first_hit}"
+            p_safe_msg = f"$p_{{safe}}$={sw.p_safe_base}"
             is_admissible = useful_window >= t_min
-            ax.axvspan(0, first_hit * dt, color=COLOR_CAUSALITY, alpha=0.1, label='Causal Safe')
-            ax.axvspan(first_hit * dt, t[-1], color=COLOR_CAUSAL, alpha=0.1, label=f'Invalid Domain ({reason})')
+            ax.axvspan(0, sw.t_safe, color=COLOR_CAUSALITY, alpha=0.1, label='Causal Safe')
+            ax.axvspan(sw.t_safe, t[-1], color=COLOR_CAUSAL, alpha=0.1, label=f'Invalid domain (first hit at {reason})')
 
         status_str = "PASS" if is_admissible else "FAIL (window too small)"
         warmup_str = ""
@@ -164,7 +187,7 @@ class ScientificReport:
         plt.savefig(self.output_dir / f"validity_gating_n{n_q}.png")
         plt.close()
 
-    def generate_admissibility_table(self, summary_data):
+    def generate_admissibility_table(self, summary_data, p_min: int = 32):
         """
         Generates the inferential admissibility results table (Dirac/Occupancy).
         Focused on validating whether the network size (N) supports the p_min criterion.
@@ -172,10 +195,11 @@ class ScientificReport:
         df = pd.DataFrame(summary_data)
         
         df = df.sort_values(["n_qubits"])
-        df["L_safe"] = df["first_hit_full"] - 1
-        df["first_hit_full"] = df["first_hit_full"].apply(lambda x: "-" if x <= 0 else x)
-        df["Admissible"] = df["L_safe"].apply(lambda x: "PASS" if x >= 32 else ("NO HIT" if x <= 0 else "FAIL"))
-        df["L_safe"] = df["L_safe"].apply(lambda x: "-" if x <= 0 else x)
+        has_hit = df["first_hit_full"] >= 0                    # -1 is the 'no hit' sentinel; index 0 is a valid hit
+        l_safe = (df["first_hit_full"] - 1).clip(lower=0)      # safe steps before the hit (conservative convention)
+        df["Admissible"] = np.where(~has_hit, "NO HIT", np.where(l_safe >= p_min, "PASS", "FAIL"))
+        df["L_safe"] = np.where(has_hit, l_safe.astype(object), "-")
+        df["first_hit_full"] = np.where(has_hit, df["first_hit_full"].astype(object), "-")
 
         numeric_cols = df.select_dtypes(include=['float64', 'float32']).columns
         df[numeric_cols] = df[numeric_cols].round(2)
@@ -183,7 +207,7 @@ class ScientificReport:
         print("\n[LOG] Admissibility Data:")
         print(df.to_string(index=False))
 
-        df_latex = df.drop(columns=['T_safe', 'max_steps_full', 'm', 'w', 'threshold', 'dt_half', 'dt_full']).rename(columns={
+        df_latex = df.drop(columns=['T_safe', 'max_steps_full', 'm', 'w', 'threshold', 'dt_half', 'dt_full', 'd_hit_eff'], errors='ignore').rename(columns={
             "n_qubits": "Lattice ($N$)",
             "threshold": "Threshold ($\\theta$)",
             "first_hit_full": "First Hit ($p_{\\text{hit}}$)",
@@ -248,26 +272,47 @@ class ScientificReport:
         plt.close()
 
     def causal_velocity(self, summary_data):
+        """Apparent boundary-arrival velocity v_hit = d_eff / t_hit, with t_hit = p_hit * dt.
+
+        d_eff is the distance from the source to the innermost window site of the side that was
+        hit, saved by the runner as ``d_hit_eff``. For even N the source sits at N//2, so the right
+        edge is one site closer than the left one; using N/2 for every run (as v1 did) overestimates
+        the velocity. Legacy files without ``d_hit_eff`` therefore get NaN instead of a guess.
+
+        This is NOT a Lieb-Robinson velocity: t_hit depends on the threshold and on the
+        persistence rule, and at low thresholds the marker fires on the exponential tail ahead of
+        the front, which can give apparent velocities above the model's maximum group velocity.
+        Runs with no hit (-1 sentinel) or a hit at index 0 have no defined velocity (NaN).
+        """
         df = pd.DataFrame(summary_data)
-        df["v_causal"] = (df["n_qubits"] / 2) / (df["first_hit_full"] * df["dt_full"])
-        df_v = df[["n_qubits", "v_causal"]].copy()
-        df_v = df_v[df_v["v_causal"] < np.inf]
-        return df_v
+        if "d_hit_eff" in df.columns:
+            d_eff = pd.to_numeric(df["d_hit_eff"], errors="coerce")
+            d_eff = d_eff.where(d_eff > 0)
+        else:
+            d_eff = pd.Series(np.nan, index=df.index)
+        has_hit = df["first_hit_full"] > 0
+        t_hit = (df["first_hit_full"] * df["dt_full"]).where(has_hit)
+        out = pd.DataFrame({
+            "n_qubits": df["n_qubits"],
+            "d_eff": d_eff,
+            "t_hit": t_hit,
+            "v_hit": d_eff / t_hit,
+        })
+        return out
 
     def generate_causal_velocity_table(self, summary_data):
-        """
-        Comparative table of information speed vs. mass.
-        Extracts the 'Lieb-Robinson Velocity' measured by the framework.
-        """
-        df_v = self.causal_velocity(summary_data)
-        
+        """Table of apparent boundary-arrival velocities (threshold-dependent; not v_LR)."""
+        df_v = self.causal_velocity(summary_data).sort_values("n_qubits")
+
         latex_table = df_v.to_latex(
             index=False,
-            caption="Measured Operational Causal Velocity ($v_{LR}$) across different lattice sizes.",
+            caption=("Apparent boundary-arrival velocity $v_{hit} = d_{eff}/t_{hit}$ "
+                     "(threshold-dependent; not a Lieb-Robinson velocity)."),
             label="tab:causal_velocity",
-            formatters={"v_causal": "{:.3f}".format}
+            na_rep="-",
+            float_format="%.3f",
         )
-        
+
         with open(self.output_dir / "causal_velocity.tex", "w") as f:
             f.write(latex_table)
 
@@ -314,21 +359,29 @@ class ScientificReport:
         """Recria o gráfico 'edge means (aligned)' das páginas 3 e 14."""
         t = np.arange(run["occ_full"].shape[0]) * dt
         
-        left_full = np.mean(run["occ_full"][:, :2], axis=1)
-        right_full = np.mean(run["occ_full"][:, -2:], axis=1)
+        W = self._edge_window(run)
+        # Gate input: peak deviation over the edge window, max_i |n_i(t) - n_i(0)|, as stored by the detector.
+        peak_left, peak_right = run["metric_full_left"][:], run["metric_full_right"][:]
+        # Diagnostic only: mean occupation over the same window.
+        left_full = np.mean(run["occ_full"][:, :W], axis=1)
+        right_full = np.mean(run["occ_full"][:, -W:], axis=1)
         
         _, ax = plt.subplots(figsize=(6, 4))
-        ax.plot(t, left_full, label='left_full', color=COLOR_MASS)
-        ax.plot(t, right_full, label='right_full', color=COLOR_CAUSALITY)
+        ax.plot(t, peak_left, label=r'left $\Delta$ (peak, used by the gate)', color=COLOR_MASS)
+        ax.plot(t, peak_right, label=r'right $\Delta$ (peak, used by the gate)', color=COLOR_CAUSALITY)
+        ax.plot(t, left_full, label='left mean (diagnostic)', color=COLOR_MASS, ls=':', alpha=0.6)
+        ax.plot(t, right_full, label='right mean (diagnostic)', color=COLOR_CAUSALITY, ls=':', alpha=0.6)
+        if "threshold" in run.attrs:
+            ax.axhline(float(run.attrs["threshold"]), color='gray', ls='-.', lw=0.8, label=r'threshold $\theta$')
         
         if fh > 0:
             ax.axvline(x=fh*dt, color=COLOR_CAUSAL, linestyle='--', alpha=0.7, label='first_hit_full')
         
         if auto_th:
             ax.axvspan(0, p_min * dt, color=COLOR_HIGHLIGHT, alpha=0.1, label='Warmup')
-        ax.set_title(f"edge means (aligned) n={n_q}", fontsize=11)
+        ax.set_title(f"edge marker (peak, W={W}) and window mean, n={n_q}", fontsize=11)
         ax.set_xlabel("time")
-        ax.set_ylabel("mean occupancy")
+        ax.set_ylabel("peak deviation / mean occupancy")
         ax.legend(fontsize='x-small')
         plt.tight_layout()
         plt.savefig(self.output_dir / f"edge_means_n{n_q}.png", dpi=300)
@@ -336,7 +389,8 @@ class ScientificReport:
 
     def plot_fft_comparison(self, run, n_q, dt, fh, p_min, analysis_cfg):
         """Gera os gráficos de FFT 'Full' vs 'Safe' (Páginas 4, 6, 15, 17)."""
-        signal = np.mean(run["occ_full"][:, -2:], axis=1)
+        # Spectrum of the gated quantity (peak deviation at the right edge), as the title states.
+        signal = run["metric_full_right"][:]
         
         def get_fft(s, delta_t, window_type='hann'):
             s_active = s[p_min:]
@@ -436,29 +490,28 @@ class ScientificReport:
 
     def plot_edge_means_comparison(self, run, n_q, dt, auto_th, p_min):
         """
-        It recreates 'edge means (aligned)' by overlaying full and half_aligned.
-        It shows that Richardson's refinement preserves the physical mean.
+        Overlays the edge marker (peak deviation, the quantity the gate uses) on the base grid (step Δt)
+        and on the refined grid (step Δt/2, sampled at the even steps). Agreement between both curves
+        is the resolution stability of the marker.
         """
         t = np.arange(run["occ_full"].shape[0]) * dt
         
-        l_full = np.mean(run["occ_full"][:, :2], axis=1)
-        r_full = np.mean(run["occ_full"][:, -2:], axis=1)
-        
-        occ_half = run["occ_half"][:]
-        occ_half_aligned = occ_half[0::2]
-        l_half = np.mean(occ_half_aligned[:, :2], axis=1)
-        r_half = np.mean(occ_half_aligned[:, -2:], axis=1)
+        W = self._edge_window(run)
+        l_full, r_full = run["metric_full_left"][:], run["metric_full_right"][:]
+        l_half, r_half = run["metric_half_left"][:][0::2], run["metric_half_right"][:][0::2]
 
         _, ax = plt.subplots(figsize=(7, 4))
-        ax.plot(t, l_full, label='Left (Full)', color=COLOR_MASS, ls='-')
-        ax.plot(t[:len(l_half)], l_half, label='Left (Half Aligned)', color='tab:cyan', ls='--')
-        ax.plot(t, r_full, label='Right (Full)', color=COLOR_CAUSAL, ls='-')
-        ax.plot(t[:len(r_half)], r_half, label='Right (Half Aligned)', color=COLOR_HIGHLIGHT, ls='--')
+        ax.plot(t, l_full, label=r'Left ($\Delta t$)', color=COLOR_MASS, ls='-')
+        ax.plot(t[:len(l_half)], l_half, label=r'Left ($\Delta t/2$, aligned)', color='tab:cyan', ls='--')
+        ax.plot(t, r_full, label=r'Right ($\Delta t$)', color=COLOR_CAUSAL, ls='-')
+        ax.plot(t[:len(r_half)], r_half, label=r'Right ($\Delta t/2$, aligned)', color=COLOR_HIGHLIGHT, ls='--')
+        if "threshold" in run.attrs:
+            ax.axhline(float(run.attrs["threshold"]), color='gray', ls='-.', lw=0.8, label=r'threshold $\theta$')
         if auto_th:
             ax.axvspan(0, p_min * dt, color=COLOR_HIGHLIGHT, alpha=0.1, label='Warmup')
-        ax.set_title(f"Edge Means Comparison: Resolution Stability (N={n_q})")
+        ax.set_title(f"Edge marker (peak, W={W}): resolution stability (N={n_q})")
         ax.set_xlabel("Time")
-        ax.set_ylabel("Mean Occupancy")
+        ax.set_ylabel(r"Peak deviation $\Delta$")
         ax.legend(fontsize='xx-small', ncol=2)
         
         plt.tight_layout()
@@ -489,6 +542,7 @@ class ScientificReport:
                     "dt_full":dt,
                     "first_hit_full": fh,
                     "dt_half": dt_half,
+                    "d_hit_eff": float(attrs.get("d_hit_eff", np.nan)),  # absent in legacy files
                     "T_safe": fh * dt if fh > 0 else 0
                 })
                 validity_cfg = parse_validity_cfg(cfg)
@@ -509,7 +563,7 @@ class ScientificReport:
                 self.plot_lieb_robinson_cone(r, n_q)
 
         self.generate_stability_table(summary_stats)
-        self.generate_admissibility_table(summary_stats)
+        self.generate_admissibility_table(summary_stats, parse_validity_cfg(cfg)['p_min'])
         self.generate_causal_velocity_table(summary_stats)
 
 if __name__ == "__main__":

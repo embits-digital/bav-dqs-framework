@@ -2,12 +2,12 @@ import pytest
 import numpy as np
 from unittest.mock import MagicMock
 
-from bav_dqs.core.detectors.boundary_detector import BoundaryDetector
+from bav_dqs.core.detectors.boundary_detector import BoundaryDetector, BoundaryDetectorCfg
 from bav_dqs.core.models.dirac_circuits import build_initial_circuit
 from bav_dqs.core.operators.correlation_observable import build_correlation_observables
 from bav_dqs.core.operators.definitions import get_dirac_observables
 from bav_dqs.core.operators.z_observable import build_z_observables
-from bav_dqs.utils.plugins.dirac_simulation import _calculate_side, _run_simulation_loop, _validate_inputs, run_boundary_detection
+from bav_dqs.utils.plugins.dirac_simulation import _build_result, _calculate_side, _run_simulation_loop, _validate_inputs, run_boundary_detection
 
 @pytest.fixture
 def basic_configs():
@@ -37,19 +37,25 @@ def test_d_hit_eff_calculation(side, dl, dr, expected):
     """Validates the accuracy of the effective distance metric for the v_hit calculation."""
     assert BoundaryDetector._get_d_hit_eff(side, dl, dr) == expected
 
-def test_update_hit_logic_persistence():
-    """Validates whether the persistence filter avoids false positives (stability)."""
-    res = {"hits": [None, None], "counts": [0, 0]}
-    thr, edge_persistence = 0.8, 3
-    
-    # Steps 1 and 2: Below persistence
-    for i in range(1, 3):
-        BoundaryDetector._update_hit_logic(res, dl=0.9, dr=0.1, thr=thr, edge_persistence=edge_persistence, step_idx=i)
-        assert res["hits"][0] is None 
-        
-    # Step 3: Achieve persistence
-    BoundaryDetector._update_hit_logic(res, dl=0.9, dr=0.1, thr=thr, edge_persistence=edge_persistence, step_idx=3)
-    assert res["hits"][0] == 0 # (3 - 3) original step at the start of detection
+def test_persistence_filter_single_side():
+    """Persistence filter through the detector API (the static _update_hit_logic was removed:
+    BoundaryDetector is the single source of truth for hits). One side above threshold only."""
+    det = BoundaryDetector(BoundaryDetectorCfg(threshold=0.8, edge_window=1, edge_persistence=3), vector_size=4)
+    baseline = np.zeros(4)
+    det.update(baseline, step=0)
+    left_only = np.array([0.9, 0.0, 0.0, 0.1])   # Delta_L = 0.9 >= 0.8, Delta_R = 0.1 < 0.8
+
+    # Steps 1 and 2: below persistence
+    for step in (1, 2):
+        det.update(left_only, step=step)
+        assert det.results.first_hit_step is None
+
+    # Step 3: persistence reached; reported index = step - edge_persistence = 0
+    det.update(left_only, step=3)
+    assert det.results.first_hit_step == 0
+    assert det.results.step_left == 0
+    assert det.results.step_right is None
+    assert det.results.first_side == "left"
 
 # --- Integration Testing (End-to-End) ---
 
@@ -156,4 +162,20 @@ def test_run_simulation_loop_multimodal_separation():
 
     assert np.all(res["history"][0] == pytest.approx(0.5)) 
 
-    assert np.all(res["correlation"][0] == pytest.approx(0.0))
+    # The ZZ channel carries the raw <Z_ref Z_j> values (0.9 in this mock), NOT a copy of the Z values.
+    assert np.all(res["correlation"][0] == pytest.approx(0.9))
+
+
+# Framework-free tests (geometry, auto-threshold, numpy connector, cross-engine equivalence)
+# live in tests/test_pipeline_numpy.py so they run without Qiskit installed.
+
+
+def test_qiskit_observable_index_is_the_qubit_index():
+    """Element j of every Qiskit observable vector refers to qubit j (little-endian labels)."""
+    z = [o.paulis.to_labels()[0] for o in build_z_observables(4)]
+    assert z == ["IIIZ", "IIZI", "IZII", "ZIII"]
+    zz = [o.paulis.to_labels()[0] for o in build_correlation_observables(4, reference_qubit=2)]
+    assert zz == ["IZIZ", "IZZI", "ZZII"]          # pairs (2,0), (2,1), (2,3)
+    ops = get_dirac_observables(4)
+    assert ops["occupancy"] == z
+    assert ops["correlation"][2] == "IZII"           # j == ref: Z_ref alone

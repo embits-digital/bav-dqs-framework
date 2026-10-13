@@ -4,8 +4,12 @@ import logging
 from pathlib import Path
 from typing import Optional
 import datetime as _date
+import warnings
 import numpy as np
 
+from bav_dqs.core.models.dirac_geometry import max_edge_window
+from bav_dqs.core.models.dirac_scheme import INTEGRATOR_ORDER, SCHEME
+from bav_dqs.utils.helpers.provenance import collect_provenance
 from bav_dqs.utils.io.data_manager import DataManager
 from bav_dqs.utils.plugins.dirac_simulation import load_dirac_simulation_yaml, parse_detector_cfg, parse_model_cfg, parse_richardson_cfg, parse_validity_cfg, parse_widths, run_boundary_detection, parse_backend_cfg
 
@@ -18,55 +22,43 @@ def _setup_logger(enabled: bool) -> Optional[logging.Logger]:
     )
     return logging.getLogger("[BAV-DQS]")
 
-def _align_half_to_full(occ_half_raw: np.ndarray, first_hit_half_raw: Optional[int]):
-    occ_half_aligned = occ_half_raw[0::2]
+from bav_dqs.utils.helpers.resolution import (
+    align_half_to_full as _align_half_to_full,
+    check_richardson_order as _check_richardson_order,
+    compute_n_safe_full_grid as _compute_n_safe_full_grid,
+    richardson_extrapolate as _richardson_extrapolate_aligned,
+)
 
-    if first_hit_half_raw is None:
-        return occ_half_aligned, None
 
-    fh = int(first_hit_half_raw)
-    if fh < 0:
-        return occ_half_aligned, None
-    if (fh % 2) != 0:
-        return occ_half_aligned, None
+def richardson_attributes(rich_cfg, integrator_order: int = INTEGRATOR_ORDER) -> dict:
+    """HDF5 provenance of the Richardson step, derived from the SAME resolved config used to compute it.
 
-    return occ_half_aligned, fh // 2
+    ``rich_cfg`` must come from ``parse_richardson_cfg`` (order_p validated, no defaults). Conventions:
+      - enabled:  richardson_order_p = the p actually used in the extrapolation;
+                  richardson_order_consistent = (p == integrator_order).
+      - disabled: richardson_order_p = -1 (sentinel: no extrapolation was computed);
+                  richardson_order_consistent = True (no inconsistent extrapolation was applied).
+    """
+    enabled = bool(rich_cfg.get("enabled", False))
+    if not enabled:
+        return {"richardson_enabled": False, "richardson_order_p": -1, "richardson_order_consistent": True}
+    p = int(rich_cfg["order_p"])  # KeyError on an unvalidated config: never fall back to a default
+    return {"richardson_enabled": True, "richardson_order_p": p,
+            "richardson_order_consistent": bool(p == int(integrator_order))}
 
-def _compute_n_safe_full_grid(
-    *,
-    n_steps_full: int,
-    first_hit_full: Optional[int],
-    first_hit_half_aligned: Optional[int],
-) -> int:
-    candidates = []
-    for fh in (first_hit_full, first_hit_half_aligned):
-        if fh is None:
-            continue
-        try:
-            k = int(fh)
-        except Exception:
-            continue
-        if k >= 0:
-            candidates.append(k)
 
-    if not candidates:
-        return int(n_steps_full)
+def _warn_if_richardson_order_inconsistent(rich_cfg, logger=None) -> Optional[str]:
+    """Warns (does not abort) when order_p != INTEGRATOR_ORDER; the mismatch is also recorded in HDF5."""
+    if not bool(rich_cfg.get("enabled", False)):
+        return None
+    msg = _check_richardson_order(int(rich_cfg["order_p"]), INTEGRATOR_ORDER)
+    if msg:
+        warnings.warn(msg)
+        if logger:
+            logger.warning(msg)
+    return msg
 
-    kmin = max(0, min(candidates))
-    return int(min(kmin, n_steps_full))
 
-def _richardson_extrapolate_aligned(
-    occ_full_prefix: np.ndarray,
-    occ_half_aligned_prefix: np.ndarray,
-    order_p: int,
-) -> np.ndarray:
-    p = int(order_p)
-    if p < 1:
-        raise ValueError("richardson.order_p must be >= 1")
-    factor = 2.0 ** p
-    denom = factor - 1.0
-    return (factor * occ_half_aligned_prefix - occ_full_prefix) / denom
-        
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run Dirac Simulation pipeline")
     parser.add_argument("--config", type=Path, default=Path("configs/dirac_simulation.yaml"))
@@ -79,9 +71,10 @@ def main() -> None:
     validity_cfg = parse_validity_cfg(cfg)
     detector_cfg = parse_detector_cfg(cfg)
     m, w, dt_full, max_steps_full = parse_model_cfg(cfg)
-    rich_cfg = parse_richardson_cfg(cfg)
+    rich_cfg = parse_richardson_cfg(cfg)  # validated once; order_p is mandatory when enabled
 
     logger = _setup_logger(bool(backend_cfg.get("logging_enabled", False)))
+    _warn_if_richardson_order_inconsistent(rich_cfg, logger)
 
     if logger is not None:
         dt_half = dt_full / 2.0
@@ -113,10 +106,12 @@ def main() -> None:
     out_path = args.results_dir / f"{exp_id}_{stamp}.h5"
     manager = DataManager(
         file_path=out_path,
-        config=str(args.config),
+        # Full resolved config embedded (not just a relative path) + config hash and Git commit.
+        config=cfg,
         schema_version=schema_version,
         experiment_id=exp_id,
-        experiment_desc=exp_desc
+        experiment_desc=exp_desc,
+        extra_metadata=collect_provenance(args.config),
     )
 
     for width in widths:
@@ -128,6 +123,15 @@ def main() -> None:
 
 def _run_and_save_width(n_qubits, m, w, dt_full, max_steps_full, detector_cfg, backend_cfg, validity_cfg, rich_cfg, manager, logger, cfg, stamp):
     """Executa as simulações e salva os resultados para uma largura específica."""
+    # Skip widths whose edge windows would contain the source site (marker would be invalid).
+    limit = max_edge_window(int(n_qubits))
+    if int(detector_cfg["edge_window"]) > limit:
+        msg = (f"Width N={n_qubits} skipped: edge_window={detector_cfg['edge_window']} "
+               f"overlaps the source site (max valid edge_window = {limit}).")
+        warnings.warn(msg)
+        if logger: logger.warning(msg)
+        return
+
     if logger: logger.info("Running lattice N=%d", n_qubits)
 
     # 1. Simulação FULL
@@ -166,8 +170,7 @@ def _run_and_save_width(n_qubits, m, w, dt_full, max_steps_full, detector_cfg, b
             first_hit_full=res_full.first_hit_step,
             first_hit_half_aligned=fh_half_aligned
         )
-    rich_enabled = bool(rich_cfg.get("enabled", False))
-    occ_rich, m_rich_l, m_rich_r = _apply_richardson_if_enabled(
+    occ_rich, m_gap_l, m_gap_r = _apply_richardson_if_enabled(
         rich_cfg, detector_cfg, occ_full, occ_half_aligned, n_safe
     )
 
@@ -181,8 +184,9 @@ def _run_and_save_width(n_qubits, m, w, dt_full, max_steps_full, detector_cfg, b
         "metric_full_right": np.asarray(res_full.d_right, dtype=float),
         "metric_half_left": np.asarray(res_half.d_left, dtype=float),
         "metric_half_right": np.asarray(res_half.d_right, dtype=float),
-        "metric_rich_left": m_rich_l,
-        "metric_rich_right": m_rich_r,
+        # Resolution gap (full vs dt/2) using the window MEAN; NOT the boundary marker.
+        "metric_res_gap_left": m_gap_l,
+        "metric_res_gap_right": m_gap_r,
     }
 
     datasets = {k: v for k, v in datasets.items() if v is not None}
@@ -200,7 +204,22 @@ def _run_and_save_width(n_qubits, m, w, dt_full, max_steps_full, detector_cfg, b
         "threshold_occupancy": float(res_full.detector_threshold),
         "threshold_correlation": float(detector_cfg["threshold"]),
         "backend_mode": str(backend_cfg["mode"]),
-        "richardson_enabled": bool(rich_enabled),
+        # --- Provenance of detector/Richardson hyperparameters ---
+        "edge_marker": "max_abs_deviation_from_t0",
+        "framework": str(backend_cfg.get("framework", "qiskit")).lower(),
+        "edge_window": int(detector_cfg["edge_window"]),
+        "edge_persistence": int(detector_cfg["edge_persistence"]),
+        "auto_threshold": bool(detector_cfg.get("auto_threshold", False)),
+        "threshold_configured": float(detector_cfg["threshold"]),
+        **richardson_attributes(rich_cfg),  # richardson_enabled / _order_p / _order_consistent
+        "integrator_scheme": SCHEME,
+        "integrator_order": int(INTEGRATOR_ORDER),
+        "p_min": int(validity_cfg["p_min"]),
+        "stricted": bool(validity_cfg["stricted"]),
+        "source_index": int(res_full.source_index),
+        "first_hit_side": res_full.first_hit_side if res_full.first_hit_side else "none",
+        "d_hit_eff": float(res_full.d_hit_eff) if res_full.d_hit_eff is not None else float("nan"),
+        "metric_res_gap_definition": "abs(mean_W(occ_full) - mean_W(occ_half_aligned))",
     }
 
     for k, v in cfg.get("experiment", {}).items():
@@ -221,11 +240,12 @@ def _apply_richardson_if_enabled(rich_cfg, detector_cfg, occ_full, occ_half_alig
     if not bool(rich_cfg.get("enabled", False)):
         return None, None, None
         
-    occ_rich = _richardson_extrapolate_aligned(occ_full[:n_safe], occ_half_aligned[:n_safe], order_p=int(rich_cfg.get("order_p", 1)))
+    # Same p that richardson_attributes() records in the HDF5 file (validated by parse_richardson_cfg).
+    occ_rich = _richardson_extrapolate_aligned(occ_full[:n_safe], occ_half_aligned[:n_safe], order_p=int(rich_cfg["order_p"]))
     w_edge = int(detector_cfg["edge_window"])
-    m_rich_l = np.abs(np.mean(occ_full[:n_safe, :w_edge], axis=1) - np.mean(occ_half_aligned[:n_safe, :w_edge], axis=1))
-    m_rich_r = np.abs(np.mean(occ_full[:n_safe, -w_edge:], axis=1) - np.mean(occ_half_aligned[:n_safe, -w_edge:], axis=1))
-    return occ_rich, m_rich_l, m_rich_r
+    m_gap_l = np.abs(np.mean(occ_full[:n_safe, :w_edge], axis=1) - np.mean(occ_half_aligned[:n_safe, :w_edge], axis=1))
+    m_gap_r = np.abs(np.mean(occ_full[:n_safe, -w_edge:], axis=1) - np.mean(occ_half_aligned[:n_safe, -w_edge:], axis=1))
+    return occ_rich, m_gap_l, m_gap_r
 
 def _log_sim_status(logger, res, dt, label):
     if not logger: return

@@ -1,22 +1,17 @@
 from __future__ import annotations
 from typing import List, Dict
 
+from bav_dqs.core.models.dirac_geometry import source_index
+from bav_dqs.core.operators.labels import z_label
+
+
 def get_dirac_observables(n_qubits: int) -> Dict[str, List[str]]:
-    """Define the operators for Mass (Z) and Causality (ZZ)."""
-    
-    z_ops = []
-    for i in range(n_qubits):
-        chars = ["I"] * n_qubits
-        chars[i] = "Z"
-        z_ops.append("".join(chars))
-        
-    ref = n_qubits // 2
-    zz_ops = []
-    for j in range(n_qubits):
-        chars = ["I"] * n_qubits
-        chars[ref] = "Z"
-        if j != ref:
-            chars[j] = "Z"
-        zz_ops.append("".join(chars))
-        
+    """Operator labels for Mass (Z) and Causality (ZZ); element j refers to qubit j (= site j).
+
+    The correlation list has one entry per site: Z_ref Z_j for j != ref and Z_ref alone for j == ref.
+    """
+    n = int(n_qubits)
+    z_ops = [z_label(n, [i]) for i in range(n)]
+    ref = source_index(n)
+    zz_ops = [z_label(n, [ref] if j == ref else [ref, j]) for j in range(n)]
     return {"occupancy": z_ops, "correlation": zz_ops}
